@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_text_input::{feathers::text_input, *};
+use bevy_text_input::{feathers::text_input, prelude::*};
 
 fn main() -> AppExit {
     App::new()

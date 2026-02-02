@@ -1,1 +1,4 @@
-pub use crate::{TextInput, TextInputDisplay, TextInputPlaceholder, TextInputPlugin};
+pub use crate::{
+    TextInputPlugin,
+    headless::{TextInput, TextInputDisplay, TextInputPlaceholder},
+};

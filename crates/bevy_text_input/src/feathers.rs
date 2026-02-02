@@ -1,6 +1,5 @@
-use crate::{headless, prelude::*};
+use crate::prelude::*;
 use bevy::prelude::*;
-use bevy_notify::prelude::*;
 
 const INPUT_BG: Color = Color::srgba(0.15, 0.15, 0.15, 1.0);
 const INPUT_BORDER: Color = Color::srgba(0.3, 0.3, 0.3, 1.0);
@@ -8,7 +7,7 @@ const PLACEHOLDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.5, 1.0);
 
 pub fn text_input() -> impl Bundle {
     (
-        headless::text_input_framing(),
+        TextInput::default(),
         Node {
             width: percent(100.0),
             height: px(28),
