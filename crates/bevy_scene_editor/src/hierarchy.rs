@@ -124,10 +124,7 @@ pub fn rebuild_hierarchy_system(
                 padding: UiRect::all(Val::Px(4.0)),
                 ..default()
             },
-            children![(
-                text_input(),
-                TextInputPlaceholder::new("Filter entities...")
-            )],
+            children![text_input("Filter entities...")],
         ))
         .id();
 

@@ -5,9 +5,9 @@ const INPUT_BG: Color = Color::srgba(0.15, 0.15, 0.15, 1.0);
 const INPUT_BORDER: Color = Color::srgba(0.3, 0.3, 0.3, 1.0);
 const PLACEHOLDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.5, 1.0);
 
-pub fn text_input() -> impl Bundle {
+pub fn text_input(placeholder: impl Into<String>) -> impl Bundle {
     (
-        TextInput::default(),
+        TextInput::new(placeholder),
         Node {
             width: percent(100.0),
             height: px(28),

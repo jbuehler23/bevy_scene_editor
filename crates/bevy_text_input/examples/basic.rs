@@ -18,12 +18,6 @@ fn spawn_text_input(mut commands: Commands) {
             row_gap: px(20),
             ..Default::default()
         },
-        children![
-            text_input(),
-            (
-                text_input(),
-                TextInputPlaceholder::new("Enter text here... ")
-            )
-        ],
+        children![text_input(""), text_input("Enter text here...")],
     ));
 }

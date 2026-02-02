@@ -88,13 +88,13 @@ fn update_text_input(
 
 fn update_text_input_display(
     mutation: On<Mutation<TextInput>>,
-    text_input: Query<(&TextInput, &Children, Option<&TextInputPlaceholder>)>,
+    text_input: Query<(&TextInput, &Children)>,
     mut display: Query<&mut Text, With<TextInputDisplay>>,
 ) -> Result<(), BevyError> {
-    let (text_input, children, placeholder) = text_input.get(mutation.entity)?;
+    let (text_input, children) = text_input.get(mutation.entity)?;
 
     let new_text = if text_input.value.is_empty() {
-        placeholder.map(ToString::to_string).unwrap_or_default()
+        text_input.default.clone()
     } else {
         text_input.value.clone()
     };
