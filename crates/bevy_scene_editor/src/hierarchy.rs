@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy_notify::prelude::*;
 use bevy_text_input::{feathers::text_input, *};
 use bevy_tree_view::*;
+use crate::state::{EditorEntity, EditorState, RebuildRequest};
+use crate::layout::HierarchyPanel;
 
 #[derive(Component)]
 pub struct HierarchyContent;
