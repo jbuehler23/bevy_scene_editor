@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy_notify::prelude::*;
+use bevy_text_input::{feathers::text_input, *};
 use bevy_tree_view::*;
-use bevy_text_input::*;
-use crate::state::{EditorEntity, EditorState, RebuildRequest};
-use crate::layout::HierarchyPanel;
 
 #[derive(Component)]
 pub struct HierarchyContent;
@@ -124,9 +122,10 @@ pub fn rebuild_hierarchy_system(
                 padding: UiRect::all(Val::Px(4.0)),
                 ..default()
             },
-            children![
-                text_input_field("Filter entities..."),
-            ],
+            children![(
+                text_input(),
+                TextInputPlaceholder::new("Filter entities...")
+            )],
         ))
         .id();
 

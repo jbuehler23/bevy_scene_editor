@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::picking::mesh_picking::MeshPickingPlugin;
 use bevy_tree_view::TreeViewPlugin;
-use bevy_text_input::TextInputPlugin;
 use bevy_split_panel::SplitPanelPlugin;
+use bevy_text_input::TextInputPlugin;
 
 use crate::state::{EditorState, RebuildRequest};
 use crate::layout;
