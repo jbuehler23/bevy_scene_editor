@@ -1048,7 +1048,7 @@ checksum = "7ef8e4b7e61dfe7719bb03c884dc270cd46a82efb40f93e9933b990c5c190c59"
 [[package]]
 name = "bevy_notify"
 version = "0.2.0"
-source = "git+https://github.com/Freyja-moth/bevy_notify#ef7b5bad674733ed9eb33b7d67fb113f07bc6f05"
+source = "git+https://github.com/Freyja-moth/bevy_notify#2d88bd65c01377ed3e41a94034f1b14567898215"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -5771,6 +5771,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.18"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1966f8ac2c1f76987d69a74d0e0f929241c10e78136434e3be70ff7f58f64214"
+checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
