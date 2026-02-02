@@ -1,0 +1,16 @@
+[package]
+name = "bevy_scene_editor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { workspace = true }
+bevy_notify = { workspace = true }
+bevy_tree_view = { path = "../bevy_tree_view" }
+bevy_text_input = { path = "../bevy_text_input" }
+bevy_split_panel = { path = "../bevy_split_panel" }
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
+
+[lints]
+workspace = true
