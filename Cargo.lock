@@ -1470,6 +1470,7 @@ name = "bevy_text_input"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_notify",
 ]
 
 [[package]]
