@@ -1,34 +1,43 @@
-use std::fmt::Display;
-
+use crate::{TextInput, TextInputDisplay, TextInputPlaceholder};
 use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
     input::keyboard::{Key, KeyboardInput},
     prelude::*,
+    ui_widgets::observe,
 };
+use bevy_notify::prelude::*;
 
-#[derive(Component, Default)]
-pub struct TextInput {
-    pub value: String,
-    pub cursor: usize,
-}
+pub fn text_input_framing() -> impl Bundle {
+    (
+        TextInput::default(),
+        observe(
+            |mutation: On<Mutation<TextInput>>,
+             text_input: Query<(&TextInput, &Children, Option<&TextInputPlaceholder>)>,
+             mut display: Query<&mut Text, With<TextInputDisplay>>|
+             -> Result<(), BevyError> {
+                let (text_input, children, placeholder) = text_input.get(mutation.entity)?;
 
-#[derive(Component, Default)]
-pub struct TextInputPlaceholder(pub String);
+                let new_text = if text_input.value.is_empty() {
+                    placeholder.map(ToString::to_string).unwrap_or_default()
+                } else {
+                    text_input.value.clone()
+                };
 
-impl Display for TextInputPlaceholder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+                if let Some(entity) = children.iter().find(|&entity| display.contains(entity)) {
+                    let mut display = display.get_mut(entity).unwrap();
 
-impl TextInputPlaceholder {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
+                    display.0 = new_text;
+                }
+
+                Ok(())
+            },
+        ),
+    )
 }
 
 #[derive(Component)]
 #[component(on_add)]
+// TODO: Rework into a global focused component.
 pub struct TextInputFocused;
 impl TextInputFocused {
     fn on_add(mut world: DeferredWorld, ctx: HookContext) {
@@ -47,9 +56,6 @@ impl TextInputFocused {
         });
     }
 }
-
-#[derive(Component)]
-pub struct TextInputDisplay;
 
 pub fn text_input_focus(
     click: On<Pointer<Click>>,

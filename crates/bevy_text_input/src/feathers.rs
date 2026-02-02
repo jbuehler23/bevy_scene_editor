@@ -1,5 +1,5 @@
-use crate::headless::*;
-use bevy::{prelude::*, ui_widgets::observe};
+use crate::{headless, prelude::*};
+use bevy::prelude::*;
 use bevy_notify::prelude::*;
 
 const INPUT_BG: Color = Color::srgba(0.15, 0.15, 0.15, 1.0);
@@ -8,6 +8,7 @@ const PLACEHOLDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.5, 1.0);
 
 pub fn text_input() -> impl Bundle {
     (
+        headless::text_input_framing(),
         Node {
             width: percent(100.0),
             height: px(28),
@@ -18,31 +19,6 @@ pub fn text_input() -> impl Bundle {
         },
         BackgroundColor::from(INPUT_BG),
         BorderColor::all(INPUT_BORDER),
-        TextInput::default(),
-        MonitorSelf,
-        NotifyChanged::<TextInput>::default(),
-        observe(
-            |mutation: On<Mutation<TextInput>>,
-             text_input: Query<(&TextInput, &Children, Option<&TextInputPlaceholder>)>,
-             mut display: Query<&mut Text, With<TextInputDisplay>>|
-             -> Result<(), BevyError> {
-                let (text_input, children, placeholder) = text_input.get(mutation.entity)?;
-
-                let new_text = if text_input.value.is_empty() {
-                    placeholder.map(ToString::to_string).unwrap_or_default()
-                } else {
-                    text_input.value.clone()
-                };
-
-                if let Some(entity) = children.iter().find(|&entity| display.contains(entity)) {
-                    let mut display = display.get_mut(entity).unwrap();
-
-                    display.0 = new_text;
-                }
-
-                Ok(())
-            },
-        ),
         children![(
             TextInputDisplay,
             Text::default(),
