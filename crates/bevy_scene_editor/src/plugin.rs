@@ -57,7 +57,7 @@ impl Plugin for EditorPlugin {
         ).in_set(EditorInput))
         // Phase 2: Detect changes and set rebuild flags
         .add_systems(Update, (
-            hierarchy::hierarchy_change_detection_system,
+            hierarchy::selection_change_system,
         ).in_set(EditorDetect))
         // Phase 3: Rebuild UI (despawn old, spawn new)
         // Chained sets ensure apply_deferred runs between phases.

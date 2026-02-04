@@ -58,6 +58,7 @@ pub fn tree_row(
             ),
             // Label
             (
+                TreeRowLabel,
                 Text::new(label.to_string()),
                 TextFont { font_size: 13.0, ..default() },
             ),

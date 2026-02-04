@@ -26,6 +26,10 @@ pub struct TreeNodeSelected;
 #[derive(Component)]
 pub struct TreeNodeExpandToggle;
 
+/// Marker for the Text entity that displays the tree row label.
+#[derive(Component)]
+pub struct TreeRowLabel;
+
 #[derive(Message)]
 pub struct TreeNodeActivated {
     pub node_entity: Entity,

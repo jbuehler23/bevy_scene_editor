@@ -8,18 +8,20 @@ use crate::layout::HierarchyPanel;
 #[derive(Component)]
 pub struct HierarchyContent;
 
-/// Marker for the entity that monitors hierarchy changes via bevy_notify.
-/// When bevy_notify fires, the observer sets `dirty = true` on this component.
+/// Marker for the global monitor that watches for entity spawns/despawns/changes.
 #[derive(Component)]
-pub struct HierarchyMonitor {
-    pub dirty: bool,
-}
+pub struct HierarchyGlobalMonitor;
 
-/// One-time setup: spawn a global bevy_notify monitor for Name and ChildOf changes.
+/// Marker for the tree container entity that holds all tree rows.
+#[derive(Component)]
+pub struct HierarchyTreeContainer;
+
+/// One-time setup: spawn a global bevy_notify monitor for hierarchy changes.
 pub fn setup_hierarchy_monitor(mut commands: Commands) {
     commands.spawn((
         EditorEntity,
-        HierarchyMonitor { dirty: false },
+        HierarchyGlobalMonitor,
+        // No Monitor component = react to ALL entities
         NotifyChanged::<Name>::default(),
         NotifyAdded::<Name>::default(),
         NotifyRemoved::<Name>::default(),
@@ -27,62 +29,202 @@ pub fn setup_hierarchy_monitor(mut commands: Commands) {
         NotifyAdded::<ChildOf>::default(),
         NotifyRemoved::<ChildOf>::default(),
     ))
-    .observe(|_trigger: On<Mutation<Name>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    })
-    .observe(|_trigger: On<Addition<Name>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    })
-    .observe(|_trigger: On<Removal<Name>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    })
-    .observe(|_trigger: On<Mutation<ChildOf>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    })
-    .observe(|_trigger: On<Addition<ChildOf>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    })
-    .observe(|_trigger: On<Removal<ChildOf>>, mut monitor: Query<&mut HierarchyMonitor>| {
-        for mut m in &mut monitor { m.dirty = true; }
-    });
+    .observe(on_name_changed)
+    .observe(on_entity_added)
+    .observe(on_entity_removed)
+    .observe(on_parent_changed)
+    .observe(on_parent_added)
+    .observe(on_parent_removed);
 }
 
-/// Detects changes and sets the rebuild flag.
-pub fn hierarchy_change_detection_system(
-    editor_state: Res<EditorState>,
-    mut rebuild: ResMut<RebuildRequest>,
-    mut monitors: Query<&mut HierarchyMonitor>,
-    mut initialized: Local<bool>,
+/// Reactively update a tree row's label when the source entity's Name changes.
+fn on_name_changed(
+    trigger: On<Mutation<Name>>,
+    names: Query<&Name>,
+    rows: Query<(Entity, &TreeNode, &Children)>,
+    mut labels: Query<&mut Text, With<TreeRowLabel>>,
+    editor_entities: Query<(), With<EditorEntity>>,
 ) {
-    if !*initialized {
-        *initialized = true;
-        rebuild.hierarchy = true;
-        rebuild.inspector = true;
+    let mutated_entity = trigger.mutated;
+
+    // Skip editor entities
+    if editor_entities.contains(mutated_entity) {
         return;
     }
 
-    // Check if bevy_notify flagged a change
-    for mut monitor in &mut monitors {
-        if monitor.dirty {
-            monitor.dirty = false;
-            rebuild.hierarchy = true;
-        }
-    }
+    let Ok(name) = names.get(mutated_entity) else { return };
 
-    if editor_state.is_changed() {
-        rebuild.hierarchy = true;
-        rebuild.inspector = true;
+    // Find the tree row that monitors this entity
+    for (_row_entity, node, children) in &rows {
+        if node.source_entity == Some(mutated_entity) {
+            // Update the label text
+            for child in children.iter() {
+                if let Ok(mut text) = labels.get_mut(child) {
+                    *text = Text::new(name.to_string());
+                    break;
+                }
+            }
+            break;
+        }
     }
 }
 
-/// Rebuilds hierarchy UI. Runs in the EditorRebuild set.
+fn on_entity_added(
+    trigger: On<Addition<Name>>,
+    mut commands: Commands,
+    tree_container: Query<Entity, With<HierarchyTreeContainer>>,
+    names: Query<&Name>,
+    child_of_query: Query<&ChildOf>,
+    children_query: Query<&Children>,
+    editor_entities: Query<(), With<EditorEntity>>,
+    editor_state: Res<EditorState>,
+) {
+    let added_entity = trigger.added;
+
+    // Skip editor entities
+    if editor_entities.contains(added_entity) {
+        return;
+    }
+
+    let Ok(container) = tree_container.single() else {
+        return;
+    };
+
+    let Ok(name) = names.get(added_entity) else {
+        return;
+    };
+
+    // Determine depth based on parent hierarchy
+    let depth = calculate_depth(added_entity, &child_of_query);
+    let has_children = children_query.get(added_entity).is_ok_and(|c| !c.is_empty());
+    let is_selected = editor_state.selected_entity == Some(added_entity);
+
+    let row_entity = commands
+        .spawn((
+            EditorEntity,
+            tree_row(name.as_str(), depth, true, has_children, is_selected, Some(added_entity)),
+        ))
+        .id();
+
+    commands.entity(container).add_child(row_entity);
+}
+
+fn on_entity_removed(
+    trigger: On<Removal<Name>>,
+    mut commands: Commands,
+    rows: Query<(Entity, &TreeNode)>,
+    editor_entities: Query<(), With<EditorEntity>>,
+) {
+    let removed_entity = trigger.removed;
+
+    // Skip editor entities
+    if editor_entities.contains(removed_entity) {
+        return;
+    }
+
+    // Find and despawn the row for this entity
+    for (row_entity, node) in &rows {
+        if node.source_entity == Some(removed_entity) {
+            commands.entity(row_entity).despawn();
+            break;
+        }
+    }
+}
+
+fn on_parent_changed(
+    trigger: On<Mutation<ChildOf>>,
+    mut rebuild: ResMut<RebuildRequest>,
+    editor_entities: Query<(), With<EditorEntity>>,
+    names: Query<&Name>,
+) {
+    let mutated_entity = trigger.mutated;
+
+    // Skip editor entities
+    if editor_entities.contains(mutated_entity) {
+        return;
+    }
+
+    // Only react to entities with Names (scene entities)
+    // Skip unnamed entities (internal Bevy/UI entities)
+    if names.get(mutated_entity).is_err() {
+        return;
+    }
+
+    // Reparenting is complex - fall back to full rebuild
+    rebuild.hierarchy = true;
+}
+
+fn on_parent_added(
+    trigger: On<Addition<ChildOf>>,
+    mut rebuild: ResMut<RebuildRequest>,
+    editor_entities: Query<(), With<EditorEntity>>,
+    names: Query<&Name>,
+) {
+    let added_entity = trigger.added;
+
+    // Skip editor entities
+    if editor_entities.contains(added_entity) {
+        return;
+    }
+
+    // Only react to entities with Names (scene entities)
+    // Skip unnamed entities (internal Bevy/UI entities)
+    if names.get(added_entity).is_err() {
+        return;
+    }
+
+    // Parent added - needs rebuild for proper tree structure
+    rebuild.hierarchy = true;
+}
+
+fn on_parent_removed(
+    trigger: On<Removal<ChildOf>>,
+    mut rebuild: ResMut<RebuildRequest>,
+    editor_entities: Query<(), With<EditorEntity>>,
+    names: Query<&Name>,
+) {
+    let removed_entity = trigger.removed;
+
+    // Skip editor entities
+    if editor_entities.contains(removed_entity) {
+        return;
+    }
+
+    // Only react to entities with Names (scene entities)
+    // Skip unnamed entities (internal Bevy/UI entities)
+    if names.get(removed_entity).is_err() {
+        return;
+    }
+
+    // Parent removed - needs rebuild for proper tree structure
+    rebuild.hierarchy = true;
+}
+
+fn calculate_depth(entity: Entity, child_of_query: &Query<&ChildOf>) -> u32 {
+    let mut depth = 0;
+    let mut current = entity;
+    while let Ok(child_of) = child_of_query.get(current) {
+        depth += 1;
+        current = child_of.parent();
+    }
+    depth
+}
+
+/// Initial build of hierarchy UI. Runs once at startup and on rebuild requests.
 pub fn rebuild_hierarchy_system(
     mut commands: Commands,
     panel_query: Query<Entity, With<HierarchyPanel>>,
     entities: Query<(Entity, Option<&Name>, Option<&ChildOf>), Without<EditorEntity>>,
     editor_state: Res<EditorState>,
     mut rebuild: ResMut<RebuildRequest>,
+    mut initialized: Local<bool>,
 ) {
+    // Always build on first frame
+    if !*initialized {
+        *initialized = true;
+        rebuild.hierarchy = true;
+    }
+
     if !rebuild.hierarchy {
         return;
     }
@@ -134,6 +276,7 @@ pub fn rebuild_hierarchy_system(
         .spawn((
             EditorEntity,
             HierarchyContent,
+            HierarchyTreeContainer,
             Node {
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
@@ -206,4 +349,47 @@ pub fn filter_system(
     _changed: Query<(Entity, &TextInput), (Changed<TextInput>, With<TextInput>)>,
 ) {
     // TODO: integrate filtering to trigger rebuild
+}
+
+const SELECTED_BG: Color = Color::srgba(0.2, 0.4, 0.7, 0.5);
+
+/// Detects selection changes and triggers inspector rebuild + updates tree row highlighting.
+pub fn selection_change_system(
+    editor_state: Res<EditorState>,
+    mut rebuild: ResMut<RebuildRequest>,
+    rows: Query<(Entity, &TreeNode)>,
+    mut backgrounds: Query<&mut BackgroundColor>,
+    mut prev_selected: Local<Option<Entity>>,
+) {
+    if !editor_state.is_changed() {
+        return;
+    }
+
+    rebuild.inspector = true;
+
+    // Unhighlight previous selection
+    if let Some(prev) = *prev_selected {
+        for (row_entity, node) in &rows {
+            if node.source_entity == Some(prev) {
+                if let Ok(mut bg) = backgrounds.get_mut(row_entity) {
+                    *bg = BackgroundColor(Color::NONE);
+                }
+                break;
+            }
+        }
+    }
+
+    // Highlight new selection
+    if let Some(selected) = editor_state.selected_entity {
+        for (row_entity, node) in &rows {
+            if node.source_entity == Some(selected) {
+                if let Ok(mut bg) = backgrounds.get_mut(row_entity) {
+                    *bg = BackgroundColor(SELECTED_BG);
+                }
+                break;
+            }
+        }
+    }
+
+    *prev_selected = editor_state.selected_entity;
 }
