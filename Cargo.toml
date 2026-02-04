@@ -1,10 +1,23 @@
+[package]
+name = "bevy_scene_editor"
+version = "0.1.0"
+edition = "2024"
+
 [workspace]
 members = ["crates/*"]
-resolver = "3"
+exclude = [ "crates/bevy_scene_editor" ]
+
+[dependencies]
+bevy.workspace = true
+bevy_notify.workspace = true
+editor_feathers.workspace = true
+editor_widgets.workspace = true
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers"] }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
+editor_feathers = { path = "crates/editor_feathers" }
+editor_widgets = { path = "crates/editor_widgets" }
 
 # Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
 [workspace.lints.clippy]
