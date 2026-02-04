@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use bevy_text_input::{feathers::text_input, prelude::*};
+use editor_feathers::{EditorFeathersPlugin, text_input::text_input};
 
 fn main() -> AppExit {
     App::new()
-        .add_plugins((DefaultPlugins, TextInputPlugin))
+        .add_plugins((DefaultPlugins, EditorFeathersPlugin))
         .add_systems(Startup, spawn_text_input)
         .run()
 }

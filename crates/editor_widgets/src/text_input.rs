@@ -1,41 +1,49 @@
-pub mod feathers;
-pub mod headless;
-pub mod prelude;
-
-use crate::prelude::*;
 use bevy::{
     input::keyboard::{Key, KeyboardInput},
-    input_focus::{FocusedInput, InputDispatchPlugin, InputFocus},
+    input_focus::FocusedInput,
     prelude::*,
 };
-use bevy_notify::prelude::*;
+
+#[derive(Component, Default)]
+pub struct TextInput {
+    pub value: String,
+    pub cursor: usize,
+}
+impl TextInput {
+    pub fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self {
+            cursor: value.len(),
+            value,
+        }
+    }
+}
+
+#[derive(Component, Default)]
+pub struct TextInputPlacholder(pub String);
+
+#[derive(Component)]
+#[require(Text)]
+pub struct TextInputDisplay;
+
+#[derive(EntityEvent)]
+pub struct EnteredText {
+    pub entity: Entity,
+    pub value: String,
+}
 
 pub struct TextInputPlugin;
 
 impl Plugin for TextInputPlugin {
     fn build(&self, app: &mut App) {
-        if !app.is_plugin_added::<InputDispatchPlugin>() {
-            app.add_plugins(InputDispatchPlugin);
-        }
-        app.add_observer(set_text_input_focus)
-            .add_observer(update_text_input)
-            .add_observer(update_text_input_display);
+        app.add_observer(update_text_input)
+            .add_systems(Update, update_text_input_display);
     }
-}
-
-fn set_text_input_focus(
-    click: On<Pointer<Click>>,
-    text_input: Query<(), With<TextInput>>,
-    mut input_focus: ResMut<InputFocus>,
-) {
-    if !text_input.contains(click.entity) {
-        return;
-    }
-    input_focus.set(click.entity);
 }
 
 fn update_text_input(
     key_event: On<FocusedInput<KeyboardInput>>,
+    mut commands: Commands,
     mut text_input: Query<&mut TextInput>,
 ) {
     let Ok(mut text_input) = text_input.get_mut(key_event.focused_entity) else {
@@ -81,29 +89,30 @@ fn update_text_input(
             Key::End => {
                 text_input.cursor = text_input.value.len();
             }
+            Key::Enter => commands.trigger(EnteredText {
+                entity: key_event.focused_entity,
+                value: text_input.value.clone(),
+            }),
             _ => {}
         }
     }
 }
 
 fn update_text_input_display(
-    mutation: On<Mutation<TextInput>>,
-    text_input: Query<(&TextInput, &Children)>,
+    text_input: Populated<(&TextInput, &TextInputPlacholder, &Children), Changed<TextInput>>,
     mut display: Query<&mut Text, With<TextInputDisplay>>,
-) -> Result<(), BevyError> {
-    let (text_input, children) = text_input.get(mutation.entity)?;
+) {
+    for (text_input, TextInputPlacholder(placeholder), children) in &text_input {
+        let new_text = if text_input.value.is_empty() {
+            placeholder.clone()
+        } else {
+            text_input.value.clone()
+        };
 
-    let new_text = if text_input.value.is_empty() {
-        text_input.default.clone()
-    } else {
-        text_input.value.clone()
-    };
+        if let Some(entity) = children.iter().find(|&entity| display.contains(entity)) {
+            let mut display = display.get_mut(entity).unwrap();
 
-    if let Some(entity) = children.iter().find(|&entity| display.contains(entity)) {
-        let mut display = display.get_mut(entity).unwrap();
-
-        display.0 = new_text;
+            display.0 = new_text;
+        }
     }
-
-    Ok(())
 }
