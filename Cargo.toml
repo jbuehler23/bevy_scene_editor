@@ -5,7 +5,6 @@ edition = "2024"
 
 [workspace]
 members = ["crates/*"]
-exclude = [ "crates/bevy_scene_editor" ]
 
 [dependencies]
 bevy.workspace = true
