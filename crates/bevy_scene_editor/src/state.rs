@@ -15,3 +15,10 @@ pub struct RebuildRequest {
     pub hierarchy: bool,
     pub inspector: bool,
 }
+
+/// Tracks drag-and-drop state for hierarchy reparenting.
+#[derive(Resource, Default)]
+pub struct DragState {
+    /// The scene entity currently being dragged, if any.
+    pub dragging: Option<Entity>,
+}

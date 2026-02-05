@@ -4,7 +4,7 @@ use bevy_tree_view::TreeViewPlugin;
 use bevy_text_input::TextInputPlugin;
 use bevy_split_panel::SplitPanelPlugin;
 
-use crate::state::{EditorState, RebuildRequest};
+use crate::state::{EditorState, RebuildRequest, DragState};
 use crate::layout;
 use crate::hierarchy;
 use crate::inspector;
@@ -35,6 +35,7 @@ impl Plugin for EditorPlugin {
         ))
         .init_resource::<EditorState>()
         .init_resource::<RebuildRequest>()
+        .init_resource::<DragState>()
         .configure_sets(Update, (
             EditorInput,
             EditorDetect,
@@ -48,6 +49,7 @@ impl Plugin for EditorPlugin {
         // Phase 1: Handle user input (clicks, drags, keyboard)
         .add_systems(Update, (
             hierarchy::hierarchy_click_system,
+            hierarchy::hierarchy_drag_drop_system,
             hierarchy::filter_system,
             viewport::orbit_camera_system,
             viewport::picking_system,

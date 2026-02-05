@@ -2,8 +2,14 @@ use bevy::prelude::*;
 use bevy_notify::prelude::*;
 use bevy_tree_view::*;
 use bevy_text_input::*;
-use crate::state::{EditorEntity, EditorState, RebuildRequest};
+use std::collections::HashMap;
+use crate::state::{EditorEntity, EditorState, RebuildRequest, DragState};
 use crate::layout::HierarchyPanel;
+
+const INDENT_PX: f32 = 16.0;
+const ROW_HEIGHT: f32 = 24.0;
+const SELECTED_BG: Color = Color::srgba(0.2, 0.4, 0.7, 0.5);
+const DROP_TARGET_BG: Color = Color::srgba(0.4, 0.6, 0.3, 0.5);
 
 #[derive(Component)]
 pub struct HierarchyContent;
@@ -37,12 +43,123 @@ pub fn setup_hierarchy_monitor(mut commands: Commands) {
     .observe(on_parent_removed);
 }
 
+/// Spawns a tree row with hierarchical structure and returns (row_entity, children_container_entity).
+fn spawn_row(
+    commands: &mut Commands,
+    label: &str,
+    has_children: bool,
+    is_selected: bool,
+    source_entity: Option<Entity>,
+) -> (Entity, Entity) {
+    let bg = if is_selected {
+        BackgroundColor(SELECTED_BG)
+    } else {
+        BackgroundColor(Color::NONE)
+    };
+    let arrow = if has_children { "▼ " } else { "  " };
+
+    // Spawn row container (vertical flex column)
+    let row_entity = commands
+        .spawn((
+            EditorEntity,
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            TreeNode {
+                expanded: true,
+                depth: 0,
+                source_entity,
+            },
+        ))
+        .id();
+
+    // Spawn row content (the clickable part)
+    let content_entity = commands
+        .spawn((
+            EditorEntity,
+            TreeRowContent,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(ROW_HEIGHT),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            bg,
+            Interaction::default(),
+        ))
+        .id();
+
+    // Spawn arrow toggle
+    let toggle_entity = commands
+        .spawn((
+            EditorEntity,
+            TreeNodeExpandToggle,
+            Node {
+                width: Val::Px(16.0),
+                height: Val::Px(ROW_HEIGHT),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Interaction::default(),
+        ))
+        .with_child((
+            Text::new(arrow.to_string()),
+            TextFont {
+                font_size: 10.0,
+                ..default()
+            },
+        ))
+        .id();
+
+    // Spawn label
+    let label_entity = commands
+        .spawn((
+            EditorEntity,
+            TreeRowLabel,
+            Text::new(label.to_string()),
+            TextFont {
+                font_size: 13.0,
+                ..default()
+            },
+        ))
+        .id();
+
+    commands
+        .entity(content_entity)
+        .add_children(&[toggle_entity, label_entity]);
+
+    // Spawn children container (indented)
+    let children_container = commands
+        .spawn((
+            EditorEntity,
+            TreeRowChildren,
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::left(Val::Px(INDENT_PX)),
+                ..default()
+            },
+        ))
+        .id();
+
+    commands
+        .entity(row_entity)
+        .add_children(&[content_entity, children_container]);
+
+    (row_entity, children_container)
+}
+
 /// Reactively update a tree row's label when the source entity's Name changes.
 fn on_name_changed(
     trigger: On<Mutation<Name>>,
     names: Query<&Name>,
-    rows: Query<(Entity, &TreeNode, &Children)>,
+    rows: Query<(Entity, &TreeNode)>,
+    children_query: Query<&Children>,
     mut labels: Query<&mut Text, With<TreeRowLabel>>,
+    content_query: Query<(), With<TreeRowContent>>,
     editor_entities: Query<(), With<EditorEntity>>,
 ) {
     let mutated_entity = trigger.mutated;
@@ -55,13 +172,21 @@ fn on_name_changed(
     let Ok(name) = names.get(mutated_entity) else { return };
 
     // Find the tree row that monitors this entity
-    for (_row_entity, node, children) in &rows {
+    for (row_entity, node) in &rows {
         if node.source_entity == Some(mutated_entity) {
-            // Update the label text
-            for child in children.iter() {
-                if let Ok(mut text) = labels.get_mut(child) {
-                    *text = Text::new(name.to_string());
-                    break;
+            // Row structure: row -> [content, children_container]
+            // Content structure: content -> [toggle, label]
+            let Ok(row_children) = children_query.get(row_entity) else { continue };
+            for row_child in row_children.iter() {
+                // Find the content entity (has TreeRowContent)
+                if content_query.contains(row_child) {
+                    let Ok(content_children) = children_query.get(row_child) else { continue };
+                    for content_child in content_children.iter() {
+                        if let Ok(mut text) = labels.get_mut(content_child) {
+                            *text = Text::new(name.to_string());
+                            return;
+                        }
+                    }
                 }
             }
             break;
@@ -78,6 +203,8 @@ fn on_entity_added(
     children_query: Query<&Children>,
     editor_entities: Query<(), With<EditorEntity>>,
     editor_state: Res<EditorState>,
+    rows: Query<(Entity, &TreeNode)>,
+    children_containers: Query<Entity, With<TreeRowChildren>>,
 ) {
     let added_entity = trigger.added;
 
@@ -94,18 +221,32 @@ fn on_entity_added(
         return;
     };
 
-    // Determine depth based on parent hierarchy
-    let depth = calculate_depth(added_entity, &child_of_query);
     let has_children = children_query.get(added_entity).is_ok_and(|c| !c.is_empty());
     let is_selected = editor_state.selected_entity == Some(added_entity);
 
-    let row_entity = commands
-        .spawn((
-            EditorEntity,
-            tree_row(name.as_str(), depth, true, has_children, is_selected, Some(added_entity)),
-        ))
-        .id();
+    // Spawn the row with hierarchical structure
+    let (row_entity, _children_container) =
+        spawn_row(&mut commands, name.as_str(), has_children, is_selected, Some(added_entity));
 
+    // Determine where to add the row
+    if let Ok(child_of) = child_of_query.get(added_entity) {
+        // Entity has a parent - try to add to parent's TreeRowChildren
+        let parent = child_of.parent();
+        for (parent_row, node) in &rows {
+            if node.source_entity == Some(parent) {
+                if let Ok(parent_row_children) = children_query.get(parent_row) {
+                    for child in parent_row_children.iter() {
+                        if children_containers.contains(child) {
+                            commands.entity(child).add_child(row_entity);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // No parent or parent row not found - add to root container
     commands.entity(container).add_child(row_entity);
 }
 
@@ -133,9 +274,13 @@ fn on_entity_removed(
 
 fn on_parent_changed(
     trigger: On<Mutation<ChildOf>>,
-    mut rebuild: ResMut<RebuildRequest>,
+    mut commands: Commands,
     editor_entities: Query<(), With<EditorEntity>>,
     names: Query<&Name>,
+    child_of_query: Query<&ChildOf>,
+    rows: Query<(Entity, &TreeNode)>,
+    children_query: Query<&Children>,
+    children_containers: Query<Entity, With<TreeRowChildren>>,
 ) {
     let mutated_entity = trigger.mutated;
 
@@ -145,20 +290,43 @@ fn on_parent_changed(
     }
 
     // Only react to entities with Names (scene entities)
-    // Skip unnamed entities (internal Bevy/UI entities)
     if names.get(mutated_entity).is_err() {
         return;
     }
 
-    // Reparenting is complex - fall back to full rebuild
-    rebuild.hierarchy = true;
+    // Find the tree row for the mutated entity
+    let Some((row_entity, _)) = rows.iter().find(|(_, n)| n.source_entity == Some(mutated_entity))
+    else {
+        return;
+    };
+
+    // Find the new parent's tree row children container
+    if let Ok(child_of) = child_of_query.get(mutated_entity) {
+        let new_parent = child_of.parent();
+        for (parent_row, node) in &rows {
+            if node.source_entity == Some(new_parent) {
+                if let Ok(parent_row_children) = children_query.get(parent_row) {
+                    for child in parent_row_children.iter() {
+                        if children_containers.contains(child) {
+                            commands.entity(row_entity).set_parent_in_place(child);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn on_parent_added(
     trigger: On<Addition<ChildOf>>,
-    mut rebuild: ResMut<RebuildRequest>,
+    mut commands: Commands,
     editor_entities: Query<(), With<EditorEntity>>,
     names: Query<&Name>,
+    child_of_query: Query<&ChildOf>,
+    rows: Query<(Entity, &TreeNode)>,
+    children_query: Query<&Children>,
+    children_containers: Query<Entity, With<TreeRowChildren>>,
 ) {
     let added_entity = trigger.added;
 
@@ -168,20 +336,41 @@ fn on_parent_added(
     }
 
     // Only react to entities with Names (scene entities)
-    // Skip unnamed entities (internal Bevy/UI entities)
     if names.get(added_entity).is_err() {
         return;
     }
 
-    // Parent added - needs rebuild for proper tree structure
-    rebuild.hierarchy = true;
+    // Find the tree row for this entity
+    let Some((row_entity, _)) = rows.iter().find(|(_, n)| n.source_entity == Some(added_entity))
+    else {
+        return;
+    };
+
+    // Find the parent's tree row children container
+    if let Ok(child_of) = child_of_query.get(added_entity) {
+        let parent = child_of.parent();
+        for (parent_row, node) in &rows {
+            if node.source_entity == Some(parent) {
+                if let Ok(parent_row_children) = children_query.get(parent_row) {
+                    for child in parent_row_children.iter() {
+                        if children_containers.contains(child) {
+                            commands.entity(row_entity).set_parent_in_place(child);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn on_parent_removed(
     trigger: On<Removal<ChildOf>>,
-    mut rebuild: ResMut<RebuildRequest>,
+    mut commands: Commands,
     editor_entities: Query<(), With<EditorEntity>>,
     names: Query<&Name>,
+    rows: Query<(Entity, &TreeNode)>,
+    tree_container: Query<Entity, With<HierarchyTreeContainer>>,
 ) {
     let removed_entity = trigger.removed;
 
@@ -191,23 +380,21 @@ fn on_parent_removed(
     }
 
     // Only react to entities with Names (scene entities)
-    // Skip unnamed entities (internal Bevy/UI entities)
     if names.get(removed_entity).is_err() {
         return;
     }
 
-    // Parent removed - needs rebuild for proper tree structure
-    rebuild.hierarchy = true;
-}
+    let Ok(container) = tree_container.single() else {
+        return;
+    };
 
-fn calculate_depth(entity: Entity, child_of_query: &Query<&ChildOf>) -> u32 {
-    let mut depth = 0;
-    let mut current = entity;
-    while let Ok(child_of) = child_of_query.get(current) {
-        depth += 1;
-        current = child_of.parent();
+    // Find the tree row and move it to root
+    for (row_entity, node) in &rows {
+        if node.source_entity == Some(removed_entity) {
+            commands.entity(row_entity).set_parent_in_place(container);
+            return;
+        }
     }
-    depth
 }
 
 /// Initial build of hierarchy UI. Runs once at startup and on rebuild requests.
@@ -237,8 +424,7 @@ pub fn rebuild_hierarchy_system(
     commands.entity(panel_entity).despawn_children();
 
     let mut root_entities: Vec<(Entity, Option<String>)> = Vec::new();
-    let mut children_map: std::collections::HashMap<Entity, Vec<(Entity, Option<String>)>> =
-        std::collections::HashMap::new();
+    let mut children_map: HashMap<Entity, Vec<(Entity, Option<String>)>> = HashMap::new();
 
     for (entity, name, child_of) in &entities {
         let name_str = name.map(|n| n.to_string());
@@ -266,9 +452,7 @@ pub fn rebuild_hierarchy_system(
                 padding: UiRect::all(Val::Px(4.0)),
                 ..default()
             },
-            children![
-                text_input_field("Filter entities..."),
-            ],
+            children![text_input_field("Filter entities..."),],
         ))
         .id();
 
@@ -287,12 +471,11 @@ pub fn rebuild_hierarchy_system(
         ))
         .id();
 
-    fn spawn_tree(
+    fn spawn_tree_hierarchical(
         commands: &mut Commands,
-        parent: Entity,
+        parent_children_container: Entity,
         entities: &[(Entity, Option<String>)],
-        children_map: &std::collections::HashMap<Entity, Vec<(Entity, Option<String>)>>,
-        depth: u32,
+        children_map: &HashMap<Entity, Vec<(Entity, Option<String>)>>,
         selected: Option<Entity>,
     ) {
         for (entity, name) in entities {
@@ -301,45 +484,44 @@ pub fn rebuild_hierarchy_system(
             let has_children = children_map.contains_key(entity);
             let is_selected = selected == Some(*entity);
 
-            let row_entity = commands
-                .spawn((
-                    EditorEntity,
-                    tree_row(label, depth, true, has_children, is_selected, Some(*entity)),
-                ))
-                .id();
+            let (row_entity, children_container) =
+                spawn_row(commands, label, has_children, is_selected, Some(*entity));
+            commands.entity(parent_children_container).add_child(row_entity);
 
-            commands.entity(parent).add_child(row_entity);
-
-            if has_children {
-                if let Some(children) = children_map.get(entity) {
-                    let mut sorted = children.clone();
-                    sorted.sort_by(|a, b| a.1.cmp(&b.1));
-                    spawn_tree(commands, parent, &sorted, children_map, depth + 1, selected);
-                }
+            // Recursively spawn children into this row's TreeRowChildren
+            if let Some(children) = children_map.get(entity) {
+                let mut sorted = children.clone();
+                sorted.sort_by(|a, b| a.1.cmp(&b.1));
+                spawn_tree_hierarchical(commands, children_container, &sorted, children_map, selected);
             }
         }
     }
 
-    spawn_tree(
+    spawn_tree_hierarchical(
         &mut commands,
         tree_entity,
         &root_entities,
         &children_map,
-        0,
         editor_state.selected_entity,
     );
 
-    commands.entity(panel_entity).add_children(&[filter_entity, tree_entity]);
+    commands
+        .entity(panel_entity)
+        .add_children(&[filter_entity, tree_entity]);
 }
 
 pub fn hierarchy_click_system(
-    query: Query<(Entity, &Interaction, &TreeNode), (Changed<Interaction>, With<TreeNode>)>,
+    content_query: Query<(Entity, &Interaction, &ChildOf), (Changed<Interaction>, With<TreeRowContent>)>,
+    rows: Query<&TreeNode>,
     mut editor_state: ResMut<EditorState>,
 ) {
-    for (_, interaction, node) in &query {
+    for (_content, interaction, content_parent) in &content_query {
         if *interaction == Interaction::Pressed {
-            if let Some(source) = node.source_entity {
-                editor_state.selected_entity = Some(source);
+            // Content's parent is the row entity which has TreeNode
+            if let Ok(node) = rows.get(content_parent.parent()) {
+                if let Some(source) = node.source_entity {
+                    editor_state.selected_entity = Some(source);
+                }
             }
         }
     }
@@ -351,13 +533,102 @@ pub fn filter_system(
     // TODO: integrate filtering to trigger rebuild
 }
 
-const SELECTED_BG: Color = Color::srgba(0.2, 0.4, 0.7, 0.5);
+/// Check if dropping dragged onto target would create a cycle.
+fn is_valid_drop(dragged: Entity, target: Entity, child_of_query: &Query<&ChildOf, Without<EditorEntity>>) -> bool {
+    if dragged == target {
+        return false;
+    }
+
+    // Walk up from target to see if we'd hit dragged (cycle detection)
+    let mut current = target;
+    while let Ok(child_of) = child_of_query.get(current) {
+        let parent = child_of.parent();
+        if parent == dragged {
+            return false; // Would create cycle
+        }
+        current = parent;
+    }
+    true
+}
+
+/// Handles drag-and-drop for reparenting entities in the hierarchy.
+pub fn hierarchy_drag_drop_system(
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut drag_state: ResMut<DragState>,
+    mut commands: Commands,
+    content_query: Query<(Entity, &Interaction, &ChildOf), With<TreeRowContent>>,
+    rows: Query<&TreeNode>,
+    mut backgrounds: Query<&mut BackgroundColor>,
+    child_of_query: Query<&ChildOf, Without<EditorEntity>>,
+    mut prev_hovered: Local<Option<Entity>>,
+) {
+    // Start drag from pressed row
+    if mouse.just_pressed(MouseButton::Left) {
+        for (_content, interaction, content_parent) in &content_query {
+            if *interaction == Interaction::Pressed {
+                if let Ok(node) = rows.get(content_parent.parent()) {
+                    drag_state.dragging = node.source_entity;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Clear previous hover highlight
+    if let Some(prev) = *prev_hovered {
+        if let Ok(mut bg) = backgrounds.get_mut(prev) {
+            *bg = BackgroundColor(Color::NONE);
+        }
+    }
+    *prev_hovered = None;
+
+    // Highlight valid drop targets while dragging
+    if drag_state.dragging.is_some() {
+        for (content_entity, interaction, content_parent) in &content_query {
+            if *interaction == Interaction::Hovered {
+                if let Ok(node) = rows.get(content_parent.parent()) {
+                    if let (Some(dragged), Some(target)) = (drag_state.dragging, node.source_entity) {
+                        if is_valid_drop(dragged, target, &child_of_query) {
+                            if let Ok(mut bg) = backgrounds.get_mut(content_entity) {
+                                *bg = BackgroundColor(DROP_TARGET_BG);
+                            }
+                            *prev_hovered = Some(content_entity);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Drop - just set_parent on scene entity, bevy_notify handles the rest
+    if mouse.just_released(MouseButton::Left) {
+        if let Some(dragged) = drag_state.dragging {
+            for (_content, interaction, content_parent) in &content_query {
+                if *interaction == Interaction::Hovered {
+                    if let Ok(node) = rows.get(content_parent.parent()) {
+                        if let Some(target) = node.source_entity {
+                            if is_valid_drop(dragged, target, &child_of_query) {
+                                commands.entity(dragged).set_parent_in_place(target);
+                                // on_parent_changed observer handles tree row reparenting
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        drag_state.dragging = None;
+    }
+}
 
 /// Detects selection changes and triggers inspector rebuild + updates tree row highlighting.
 pub fn selection_change_system(
     editor_state: Res<EditorState>,
     mut rebuild: ResMut<RebuildRequest>,
     rows: Query<(Entity, &TreeNode)>,
+    children_query: Query<&Children>,
+    content_query: Query<Entity, With<TreeRowContent>>,
     mut backgrounds: Query<&mut BackgroundColor>,
     mut prev_selected: Local<Option<Entity>>,
 ) {
@@ -367,26 +638,36 @@ pub fn selection_change_system(
 
     rebuild.inspector = true;
 
+    // Helper to find content entity for a source entity
+    let find_content = |source: Entity| -> Option<Entity> {
+        for (row_entity, node) in &rows {
+            if node.source_entity == Some(source) {
+                if let Ok(row_children) = children_query.get(row_entity) {
+                    for child in row_children.iter() {
+                        if content_query.contains(child) {
+                            return Some(child);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    };
+
     // Unhighlight previous selection
     if let Some(prev) = *prev_selected {
-        for (row_entity, node) in &rows {
-            if node.source_entity == Some(prev) {
-                if let Ok(mut bg) = backgrounds.get_mut(row_entity) {
-                    *bg = BackgroundColor(Color::NONE);
-                }
-                break;
+        if let Some(content_entity) = find_content(prev) {
+            if let Ok(mut bg) = backgrounds.get_mut(content_entity) {
+                *bg = BackgroundColor(Color::NONE);
             }
         }
     }
 
     // Highlight new selection
     if let Some(selected) = editor_state.selected_entity {
-        for (row_entity, node) in &rows {
-            if node.source_entity == Some(selected) {
-                if let Ok(mut bg) = backgrounds.get_mut(row_entity) {
-                    *bg = BackgroundColor(SELECTED_BG);
-                }
-                break;
+        if let Some(content_entity) = find_content(selected) {
+            if let Ok(mut bg) = backgrounds.get_mut(content_entity) {
+                *bg = BackgroundColor(SELECTED_BG);
             }
         }
     }

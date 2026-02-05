@@ -30,6 +30,14 @@ pub struct TreeNodeExpandToggle;
 #[derive(Component)]
 pub struct TreeRowLabel;
 
+/// Marker for the container that holds a tree row's child rows.
+#[derive(Component)]
+pub struct TreeRowChildren;
+
+/// Marker for the interactive row content (clickable part with arrow and label).
+#[derive(Component)]
+pub struct TreeRowContent;
+
 #[derive(Message)]
 pub struct TreeNodeActivated {
     pub node_entity: Entity,
@@ -38,12 +46,19 @@ pub struct TreeNodeActivated {
 
 pub fn tree_node_toggle_system(
     query: Query<(Entity, &Interaction, &ChildOf), (Changed<Interaction>, With<TreeNodeExpandToggle>)>,
+    child_of_query: Query<&ChildOf>,
     mut nodes: Query<&mut TreeNode>,
 ) {
-    for (_, interaction, child_of) in &query {
+    for (_, interaction, toggle_child_of) in &query {
         if *interaction == Interaction::Pressed {
-            if let Ok(mut node) = nodes.get_mut(child_of.parent()) {
-                node.expanded = !node.expanded;
+            // Toggle is child of content, content is child of row
+            // So we need to go up two levels: toggle -> content -> row
+            let content_entity = toggle_child_of.parent();
+            if let Ok(content_child_of) = child_of_query.get(content_entity) {
+                let row_entity = content_child_of.parent();
+                if let Ok(mut node) = nodes.get_mut(row_entity) {
+                    node.expanded = !node.expanded;
+                }
             }
         }
     }
