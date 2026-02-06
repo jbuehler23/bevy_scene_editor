@@ -1,6 +1,8 @@
+pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
 pub mod layout;
+pub mod viewport;
 
 use bevy::{
     feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme},
@@ -22,6 +24,8 @@ impl Plugin for EditorPlugin {
             EditorFeathersPlugin,
             inspector::InspectorPlugin,
             hierarchy::HierarchyPlugin,
+            viewport::ViewportPlugin,
+            gizmos::TransformGizmosPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
         .add_systems(Startup, spawn_layout)

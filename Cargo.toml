@@ -9,12 +9,16 @@ members = ["crates/*"]
 [dependencies]
 bevy.workspace = true
 bevy_notify.workspace = true
+bevy_panorbit_camera.workspace = true
+bevy_infinite_grid.workspace = true
 editor_feathers.workspace = true
 editor_widgets.workspace = true
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers"] }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
+bevy_panorbit_camera = "0.34"
+bevy_infinite_grid = "0.18"
 editor_feathers = { path = "crates/editor_feathers" }
 editor_widgets = { path = "crates/editor_widgets" }
 

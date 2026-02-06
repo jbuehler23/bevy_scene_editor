@@ -4,7 +4,7 @@ use bevy::{
 };
 use editor_feathers::{split_panel, text_input, tree_view::tree_container_drop_observers};
 
-use crate::{EditorEntity, hierarchy::{HierarchyPanel, HierarchyTreeContainer}, inspector::Inspector};
+use crate::{EditorEntity, hierarchy::{HierarchyPanel, HierarchyTreeContainer}, inspector::Inspector, viewport::SceneViewport};
 
 /// Marker on the hierarchy filter text input
 #[derive(Component)]
@@ -67,6 +67,7 @@ fn entity_heiarchy() -> impl Bundle {
 fn scene_view() -> impl Bundle {
     (
         EditorEntity,
+        SceneViewport,
         Node {
             height: percent(100),
             ..Default::default()
