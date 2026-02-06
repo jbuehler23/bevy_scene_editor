@@ -23,6 +23,9 @@ editor_widgets = { path = "crates/editor_widgets" }
 too_many_arguments = "allow"
 type_complexity = "allow"
 
+[lints]
+workspace = true
+
 [profile.dev]
 opt-level = 1
 

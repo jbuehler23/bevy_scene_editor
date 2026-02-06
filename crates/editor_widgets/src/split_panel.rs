@@ -1,5 +1,3 @@
-// TODO: Add support for mouse dragging.
-
 use bevy::prelude::*;
 
 #[derive(Component)]

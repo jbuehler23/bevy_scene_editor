@@ -2,9 +2,13 @@ use bevy::{
     feathers::{theme::ThemeBackgroundColor, tokens},
     prelude::*,
 };
-use editor_feathers::{split_panel, text_input};
+use editor_feathers::{split_panel, text_input, tree_view::tree_container_drop_observers};
 
-use crate::{EditorEntity, inspector::Inspector};
+use crate::{EditorEntity, hierarchy::{HierarchyPanel, HierarchyTreeContainer}, inspector::Inspector};
+
+/// Marker on the hierarchy filter text input
+#[derive(Component)]
+pub struct HierarchyFilter;
 
 const PANEL_BG: Color = Color::srgba(0.12, 0.12, 0.12, 1.0);
 
@@ -32,14 +36,31 @@ pub fn editor_layout() -> impl Bundle {
 
 fn entity_heiarchy() -> impl Bundle {
     (
-        EditorEntity,
+        HierarchyPanel,
         Node {
             height: percent(100),
+            flex_direction: FlexDirection::Column,
             padding: percent(0.2).all(),
             ..Default::default()
         },
         BackgroundColor(PANEL_BG),
-        children![text_input::text_input("Filter entities")],
+        children![
+            (HierarchyFilter, text_input::text_input("Filter entities")),
+            (
+                HierarchyTreeContainer,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    width: percent(100),
+                    flex_grow: 1.0,
+                    min_height: px(0.0),
+                    overflow: Overflow::scroll_y(),
+                    margin: UiRect::top(px(8.0)),
+                    ..Default::default()
+                },
+                BackgroundColor(Color::NONE),
+                tree_container_drop_observers(),
+            )
+        ],
     )
 }
 
@@ -66,6 +87,7 @@ fn entity_inspector() -> impl Bundle {
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: px(5),
+                overflow: Overflow::scroll_y(),
                 ..Default::default()
             }
         )],

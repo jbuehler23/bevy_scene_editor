@@ -1,3 +1,4 @@
+pub mod list_view;
 pub mod split_panel;
 pub mod text_input;
 pub mod tree_view;
@@ -11,5 +12,7 @@ impl PluginGroup for EditorWidgetsPlugins {
         PluginGroupBuilder::start::<Self>()
             .add(text_input::TextInputPlugin)
             .add(split_panel::SplitPanelPlugin)
+            .add(tree_view::TreeViewPlugin)
+            .add(list_view::ListViewPlugin)
     }
 }

@@ -19,6 +19,7 @@ fn spawn_scene(mut commands: Commands) {
     commands.spawn((
         Name::new("Car"),
         Car,
+        Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)),
         children![
             Name::new("Bonnet"),
             Name::new("Front Left Wheel"),
