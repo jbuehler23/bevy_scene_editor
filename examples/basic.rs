@@ -1,5 +1,5 @@
 use bevy::{input::common_conditions::input_just_pressed, prelude::*};
-use bevy_scene_editor::{EditorPlugin, inspector::SelectedEntity};
+use bevy_scene_editor::{EditorPlugin, selection::Selected};
 
 #[derive(Component)]
 pub struct Car;
@@ -86,5 +86,5 @@ fn spawn_scene(
 
 fn select_car(mut commands: Commands, car: Single<Entity, With<Car>>) {
     println!("Selecting");
-    commands.entity(*car).insert(SelectedEntity);
+    commands.entity(*car).insert(Selected);
 }

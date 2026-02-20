@@ -13,14 +13,21 @@ bevy_panorbit_camera.workspace = true
 bevy_infinite_grid.workspace = true
 editor_feathers.workspace = true
 editor_widgets.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [workspace.dependencies]
-bevy = { version = "0.18", features = ["experimental_bevy_feathers"] }
+bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug"] }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
 bevy_panorbit_camera = "0.34"
 bevy_infinite_grid = "0.18"
 editor_feathers = { path = "crates/editor_feathers" }
 editor_widgets = { path = "crates/editor_widgets" }
+serde = "1"
+lucide-icons = "0.563"
+serde_json = "1"
+bevy_ui_text_input = "0.7"
+bevy_easings = "0.18.0"
 
 # Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
 [workspace.lints.clippy]

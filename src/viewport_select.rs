@@ -1,0 +1,341 @@
+use bevy::{prelude::*, ui::UiGlobalTransform};
+use bevy::input_focus::InputFocus;
+use bevy_panorbit_camera::PanOrbitCamera;
+use editor_feathers::context_menu::spawn_context_menu;
+use editor_widgets::context_menu::{ContextMenuAction, ContextMenuCloseSet, ContextMenuState};
+
+use crate::{
+    entity_ops,
+    gizmos::GizmoDragState,
+    modal_transform::{ModalTransformState, ViewportDragState},
+    selection::{Selected, Selection},
+    viewport::SceneViewport,
+    EditorEntity,
+};
+
+pub struct ViewportSelectPlugin;
+
+impl Plugin for ViewportSelectPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<BoxSelectState>()
+            .add_systems(
+                Update,
+                (
+                    handle_viewport_click,
+                    handle_box_select,
+                    handle_viewport_right_click.after(ContextMenuCloseSet),
+                ),
+            )
+            .add_observer(on_viewport_context_menu_action);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Box select state
+// ---------------------------------------------------------------------------
+
+#[derive(Resource, Default)]
+pub struct BoxSelectState {
+    pub active: bool,
+    pub start: Vec2,
+    pub current: Vec2,
+}
+
+// ---------------------------------------------------------------------------
+// Click-to-select in viewport using position-based proximity
+// ---------------------------------------------------------------------------
+
+fn handle_viewport_click(
+    mouse: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    gizmo_drag: Res<GizmoDragState>,
+    modal: Res<ModalTransformState>,
+    vp_drag: Res<ViewportDragState>,
+    mut selection: ResMut<Selection>,
+    mut input_focus: ResMut<InputFocus>,
+    mut commands: Commands,
+) {
+    // Don't select during gizmo drag, modal ops, or viewport drag
+    if !mouse.just_pressed(MouseButton::Left)
+        || gizmo_drag.active
+        || modal.active.is_some()
+        || vp_drag.active.is_some()
+    {
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    // Check if cursor is within viewport
+    let Ok((vp_computed, vp_tf)) = viewport_query.single() else {
+        return;
+    };
+    let scale = vp_computed.inverse_scale_factor();
+    let vp_pos = vp_tf.translation * scale;
+    let vp_size = vp_computed.size() * scale;
+    let vp_top_left = vp_pos - vp_size / 2.0;
+    let local_cursor = cursor_pos - vp_top_left;
+    if local_cursor.x < 0.0
+        || local_cursor.y < 0.0
+        || local_cursor.x > vp_size.x
+        || local_cursor.y > vp_size.y
+    {
+        return;
+    }
+
+    // Clear input focus so keyboard shortcuts (G/R/S) work after viewport click
+    input_focus.0 = None;
+
+    let Ok((camera, cam_tf)) = camera_query.single() else {
+        return;
+    };
+
+    // Find the closest entity to the click position via screen-space proximity
+    let mut best_entity = None;
+    let mut best_dist = 30.0_f32; // Max pixel distance to select
+
+    for (entity, global_tf) in &scene_entities {
+        let pos = global_tf.translation();
+        if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
+            let dist = (screen_pos - local_cursor).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best_entity = Some(entity);
+            }
+        }
+    }
+
+    if let Some(entity) = best_entity {
+        let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        if ctrl {
+            selection.toggle(&mut commands, entity);
+        } else {
+            selection.select_single(&mut commands, entity);
+        }
+    } else {
+        // Clicked on empty space — deselect all (unless Ctrl held)
+        let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        if !ctrl {
+            selection.clear(&mut commands);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Box select (drag in viewport)
+// ---------------------------------------------------------------------------
+
+fn handle_box_select(
+    mouse: Res<ButtonInput<MouseButton>>,
+    _keyboard: Res<ButtonInput<KeyCode>>,
+    windows: Query<&Window>,
+    mut box_state: ResMut<BoxSelectState>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    gizmo_drag: Res<GizmoDragState>,
+    scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    mut selection: ResMut<Selection>,
+    mut commands: Commands,
+) {
+    if gizmo_drag.active {
+        box_state.active = false;
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    // Start box select on middle mouse drag
+    if mouse.just_pressed(MouseButton::Middle) && !box_state.active {
+        box_state.active = true;
+        box_state.start = cursor_pos;
+        box_state.current = cursor_pos;
+        return;
+    }
+
+    if box_state.active {
+        box_state.current = cursor_pos;
+
+        let released = mouse.just_released(MouseButton::Middle);
+
+        if released {
+            box_state.active = false;
+
+            let Ok((camera, cam_tf)) = camera_query.single() else {
+                return;
+            };
+            let Ok((vp_computed, vp_tf)) = viewport_query.single() else {
+                return;
+            };
+            let scale = vp_computed.inverse_scale_factor();
+            let vp_pos = vp_tf.translation * scale;
+            let vp_size = vp_computed.size() * scale;
+            let vp_top_left = vp_pos - vp_size / 2.0;
+
+            // Convert box to viewport-local coords
+            let min = (box_state.start - vp_top_left).min(box_state.current - vp_top_left);
+            let max = (box_state.start - vp_top_left).max(box_state.current - vp_top_left);
+
+            // Find entities within the box
+            let mut selected_entities = Vec::new();
+            for (entity, global_tf) in &scene_entities {
+                let pos = global_tf.translation();
+                if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
+                    if screen_pos.x >= min.x
+                        && screen_pos.x <= max.x
+                        && screen_pos.y >= min.y
+                        && screen_pos.y <= max.y
+                    {
+                        if !selected_entities.contains(&entity) {
+                            selected_entities.push(entity);
+                        }
+                    }
+                }
+            }
+
+            if !selected_entities.is_empty() {
+                selection.select_multiple(&mut commands, &selected_entities);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Right-click context menu in viewport
+// ---------------------------------------------------------------------------
+
+fn handle_viewport_right_click(
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    gizmo_drag: Res<GizmoDragState>,
+    modal: Res<ModalTransformState>,
+    mut state: ResMut<ContextMenuState>,
+    mut selection: ResMut<Selection>,
+    mut commands: Commands,
+) {
+    if !mouse.just_pressed(MouseButton::Right) || gizmo_drag.active || modal.active.is_some() {
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    // Check if cursor is within viewport
+    let Ok((vp_computed, vp_tf)) = viewport_query.single() else {
+        return;
+    };
+    let scale = vp_computed.inverse_scale_factor();
+    let vp_pos = vp_tf.translation * scale;
+    let vp_size = vp_computed.size() * scale;
+    let vp_top_left = vp_pos - vp_size / 2.0;
+    let local_cursor = cursor_pos - vp_top_left;
+    if local_cursor.x < 0.0
+        || local_cursor.y < 0.0
+        || local_cursor.x > vp_size.x
+        || local_cursor.y > vp_size.y
+    {
+        return;
+    }
+
+    let Ok((camera, cam_tf)) = camera_query.single() else {
+        return;
+    };
+
+    // Find the closest entity to the click position via screen-space proximity
+    let mut best_entity = None;
+    let mut best_dist = 30.0_f32;
+
+    for (entity, global_tf) in &scene_entities {
+        let pos = global_tf.translation();
+        if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
+            let dist = (screen_pos - local_cursor).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best_entity = Some(entity);
+            }
+        }
+    }
+
+    let Some(entity) = best_entity else {
+        return; // No entity near cursor — no menu
+    };
+
+    // Close any existing context menu
+    if let Some(menu) = state.menu_entity.take() {
+        if let Ok(mut ec) = commands.get_entity(menu) {
+            ec.despawn();
+        }
+    }
+
+    // Select the entity if not already selected
+    if !selection.is_selected(entity) {
+        selection.select_single(&mut commands, entity);
+    }
+
+    let menu_items = &[
+        ("viewport.focus", "Focus                   F"),
+        ("viewport.duplicate", "Duplicate        Ctrl+D"),
+        ("viewport.delete", "Delete             Del"),
+    ];
+
+    let menu = spawn_context_menu(&mut commands, cursor_pos, Some(entity), menu_items);
+    state.menu_entity = Some(menu);
+    state.target_entity = Some(entity);
+}
+
+/// Handle context menu actions for viewport operations.
+fn on_viewport_context_menu_action(
+    event: On<ContextMenuAction>,
+    mut commands: Commands,
+    selected_transforms: Query<&GlobalTransform, With<Selected>>,
+    mut camera_query: Query<(&mut PanOrbitCamera, &mut Transform)>,
+) {
+    match event.action.as_str() {
+        "viewport.focus" => {
+            if let Some(target) = event.target_entity {
+                if let Ok(global_tf) = selected_transforms.get(target) {
+                    let target_pos = global_tf.translation();
+                    let scale = global_tf.compute_transform().scale;
+                    let dist = (scale.length() * 3.0).max(5.0);
+
+                    for (mut cam, mut transform) in &mut camera_query {
+                        cam.focus = target_pos;
+                        let dir = (transform.translation - target_pos).normalize_or_zero();
+                        transform.translation = target_pos + dir * dist;
+                    }
+                }
+            }
+        }
+        "viewport.duplicate" => {
+            commands.queue(|world: &mut World| {
+                entity_ops::duplicate_selected(world);
+            });
+        }
+        "viewport.delete" => {
+            commands.queue(|world: &mut World| {
+                entity_ops::delete_selected(world);
+            });
+        }
+        _ => {}
+    }
+}

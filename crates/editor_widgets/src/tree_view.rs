@@ -39,6 +39,91 @@ pub struct TreeRowLabel;
 #[derive(Component)]
 pub struct TreeRowChildren;
 
+/// Tracks whether a tree node's children have been lazily populated.
+/// Set to `true` after first expansion spawns children; prevents re-population on re-expand.
+#[derive(Component, Default)]
+pub struct TreeChildrenPopulated(pub bool);
+
+/// Classifies a scene entity by type for sorting and colored dot display.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EntityCategory {
+    Camera,
+    Light,
+    Mesh,
+    Scene,
+    #[default]
+    Entity,
+}
+
+/// Marker for the colored category dot in a tree row.
+#[derive(Component)]
+pub struct TreeRowDot;
+
+/// Marker for the visibility toggle icon in a tree row.
+#[derive(Component)]
+pub struct TreeRowVisibilityToggle;
+
+/// Event fired when a visibility toggle is clicked
+#[derive(EntityEvent)]
+pub struct TreeRowVisibilityToggled {
+    #[event_target]
+    pub entity: Entity,
+    /// The source (scene) entity to toggle visibility
+    pub source_entity: Entity,
+}
+
+/// Marker on the text input during inline rename
+#[derive(Component)]
+pub struct TreeRowInlineRename;
+
+// ---------------------------------------------------------------------------
+// Index resource: source entity → tree row entity (O(1) lookups)
+// ---------------------------------------------------------------------------
+
+/// Maps source (scene) entities to their corresponding tree row UI entities.
+/// Maintained automatically by systems that react to `TreeNode` additions/removals.
+#[derive(Resource, Default)]
+pub struct TreeIndex {
+    /// source entity → tree row entity
+    map: HashMap<Entity, Entity>,
+}
+
+impl TreeIndex {
+    /// Get the tree row entity for a given source entity.
+    pub fn get(&self, source: Entity) -> Option<Entity> {
+        self.map.get(&source).copied()
+    }
+
+    /// Insert a mapping from source entity to tree row entity.
+    pub fn insert(&mut self, source: Entity, tree_row: Entity) {
+        self.map.insert(source, tree_row);
+    }
+
+    /// Remove the mapping for a source entity.
+    pub fn remove(&mut self, source: Entity) {
+        self.map.remove(&source);
+    }
+
+    /// Check if a source entity has a tree row.
+    pub fn contains(&self, source: Entity) -> bool {
+        self.map.contains_key(&source)
+    }
+}
+
+use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+// Focus tracking
+// ---------------------------------------------------------------------------
+
+/// Tracks which tree row has keyboard focus (rendered with a focus ring).
+#[derive(Resource, Default)]
+pub struct TreeFocused(pub Option<Entity>);
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
 /// Event fired when a tree row is clicked
 #[derive(EntityEvent)]
 pub struct TreeRowClicked {
@@ -68,29 +153,58 @@ pub struct TreeRowDroppedOnRoot {
     pub dragged_source: Entity,
 }
 
+/// Event fired when an inline rename is committed
+#[derive(EntityEvent)]
+pub struct TreeRowRenamed {
+    #[event_target]
+    pub entity: Entity,
+    /// The source (scene) entity
+    pub source_entity: Entity,
+    /// The new name entered by the user
+    pub new_name: String,
+}
+
+/// Event fired to request starting an inline rename
+#[derive(EntityEvent)]
+pub struct TreeRowStartRename {
+    #[event_target]
+    pub entity: Entity,
+    /// The source (scene) entity to rename
+    pub source_entity: Entity,
+}
+
+// ---------------------------------------------------------------------------
+// Plugin
+// ---------------------------------------------------------------------------
+
 pub struct TreeViewPlugin;
 
 impl Plugin for TreeViewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(toggle_tree_node_expanded);
+        app.init_resource::<TreeIndex>()
+            .init_resource::<TreeFocused>()
+            .add_systems(PostUpdate, (maintain_tree_index,));
     }
 }
 
-fn toggle_tree_node_expanded(
-    _click: On<Pointer<Click>>,
-    mut commands: Commands,
-    toggle_query: Query<&ChildOf, With<TreeNodeExpandToggle>>,
-    tree_node_query: Query<(Entity, &TreeNodeExpanded)>,
+/// Keep TreeIndex in sync with TreeNode additions and removals.
+fn maintain_tree_index(
+    mut index: ResMut<TreeIndex>,
+    added: Query<(Entity, &TreeNode), Added<TreeNode>>,
+    mut removed: RemovedComponents<TreeNode>,
 ) {
-    let Ok(&ChildOf(parent)) = toggle_query.get(_click.event_target()) else {
-        return;
-    };
+    for (tree_row, tree_node) in &added {
+        index.insert(tree_node.0, tree_row);
+    }
 
-    // The parent of the toggle is TreeRowContent, and its parent is the tree row
-    // Actually, let's find the tree node by walking up
-    if let Ok((entity, expanded)) = tree_node_query.get(parent) {
-        commands
-            .entity(entity)
-            .insert(TreeNodeExpanded(!expanded.0));
+    for removed_entity in removed.read() {
+        // Scan the map to find which source entity maps to this removed tree row.
+        // This is O(n) but only runs on removal frames, not every frame.
+        let source = index.map.iter()
+            .find(|(_, tree_row)| **tree_row == removed_entity)
+            .map(|(source, _)| *source);
+        if let Some(source) = source {
+            index.remove(source);
+        }
     }
 }

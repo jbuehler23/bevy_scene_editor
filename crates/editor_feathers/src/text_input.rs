@@ -1,9 +1,7 @@
 use bevy::{feathers::theme::ThemedText, input_focus::InputFocus, prelude::*, ui_widgets::observe};
 use editor_widgets::text_input::{TextInput, TextInputDisplay, TextInputPlacholder};
 
-const INPUT_BG: Color = Color::srgba(0.15, 0.15, 0.15, 1.0);
-const INPUT_BORDER: Color = Color::srgba(0.3, 0.3, 0.3, 1.0);
-// const PLACEHOLDER_COLOR: Color = Color::srgba(0.5, 0.5, 0.5, 1.0);
+use crate::tokens;
 
 pub fn text_input(placeholder: impl Into<String>) -> impl Bundle {
     (
@@ -11,18 +9,18 @@ pub fn text_input(placeholder: impl Into<String>) -> impl Bundle {
         TextInputPlacholder(placeholder.into()),
         Node {
             width: percent(100.0),
-            height: px(28),
-            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            height: px(tokens::INPUT_HEIGHT),
+            padding: UiRect::axes(Val::Px(tokens::SPACING_MD), Val::Px(tokens::SPACING_SM)),
             align_items: AlignItems::Center,
             border: px(1).all(),
             ..default()
         },
-        BackgroundColor::from(INPUT_BG),
-        BorderColor::all(INPUT_BORDER),
+        BackgroundColor::from(tokens::INPUT_BG),
+        BorderColor::all(tokens::BORDER_SUBTLE),
         children![(
             TextInputDisplay,
             TextFont {
-                font_size: 13.,
+                font_size: tokens::FONT_MD,
                 ..Default::default()
             },
             ThemedText

@@ -1,9 +1,7 @@
 use bevy::{prelude::*, ui_widgets::observe};
 use editor_widgets::list_view::{ListItem, ListItemContent, ListView};
 
-const ITEM_BG: Color = Color::NONE;
-const ITEM_HOVER_BG: Color = Color::srgba(0.2, 0.2, 0.2, 1.0);
-const INDEX_COLOR: Color = Color::srgba(0.5, 0.5, 0.5, 1.0);
+use crate::tokens;
 
 /// Styled list view container (vertical column with left indent)
 pub fn list_view() -> impl Bundle {
@@ -11,7 +9,7 @@ pub fn list_view() -> impl Bundle {
         ListView,
         Node {
             flex_direction: FlexDirection::Column,
-            padding: UiRect::left(px(12.0)),
+            padding: UiRect::left(px(tokens::SPACING_LG)),
             ..default()
         },
     )
@@ -24,21 +22,21 @@ pub fn list_item(index: usize) -> impl Bundle {
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
-            column_gap: px(4),
-            padding: UiRect::axes(px(2.0), px(1.0)),
+            column_gap: px(tokens::SPACING_SM),
+            padding: UiRect::axes(px(tokens::SPACING_XS), px(1.0)),
             width: percent(100),
             ..default()
         },
-        BackgroundColor(ITEM_BG),
+        BackgroundColor(Color::NONE),
         children![
             // Index label
             (
                 Text::new(format!("[{index}]")),
                 TextFont {
-                    font_size: 11.,
+                    font_size: tokens::FONT_SM,
                     ..default()
                 },
-                TextColor(INDEX_COLOR),
+                TextColor(tokens::TEXT_SECONDARY),
                 Node {
                     min_width: px(28.0),
                     flex_shrink: 0.0,
@@ -59,7 +57,7 @@ pub fn list_item(index: usize) -> impl Bundle {
             |hover: On<Pointer<Over>>,
              mut q: Query<&mut BackgroundColor, With<ListItem>>| {
                 if let Ok(mut bg) = q.get_mut(hover.event_target()) {
-                    bg.0 = ITEM_HOVER_BG;
+                    bg.0 = tokens::HOVER_BG;
                 }
             },
         ),
@@ -67,7 +65,7 @@ pub fn list_item(index: usize) -> impl Bundle {
             |out: On<Pointer<Out>>,
              mut q: Query<&mut BackgroundColor, With<ListItem>>| {
                 if let Ok(mut bg) = q.get_mut(out.event_target()) {
-                    bg.0 = ITEM_BG;
+                    bg.0 = Color::NONE;
                 }
             },
         ),
