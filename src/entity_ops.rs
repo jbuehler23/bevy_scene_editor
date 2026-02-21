@@ -47,6 +47,7 @@ pub enum EntityTemplate {
     Empty,
     Mesh3dCube,
     Mesh3dSphere,
+    BrushCuboid,
     PointLight,
     DirectionalLight,
     SpotLight,
@@ -59,6 +60,7 @@ impl EntityTemplate {
             Self::Empty => "Empty Entity",
             Self::Mesh3dCube => "Cube",
             Self::Mesh3dSphere => "Sphere",
+            Self::BrushCuboid => "Brush",
             Self::PointLight => "Point Light",
             Self::DirectionalLight => "Directional Light",
             Self::SpotLight => "Spot Light",
@@ -112,6 +114,14 @@ pub fn create_entity(
                 ))
                 .id()
         }
+        EntityTemplate::BrushCuboid => commands
+            .spawn((
+                Name::new("Brush"),
+                crate::brush::Brush::cuboid(0.5, 0.5, 0.5),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id(),
         EntityTemplate::PointLight => commands
             .spawn((
                 Name::new("Point Light"),

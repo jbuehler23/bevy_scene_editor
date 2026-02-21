@@ -143,10 +143,17 @@ fn handle_gizmo_hover(
     drag_state: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    edit_mode: Res<crate::brush::EditMode>,
+    walk_mode: Res<crate::viewport::WalkModeState>,
 ) {
     hover.hovered_axis = None;
 
-    if drag_state.active || modal.active.is_some() {
+    if drag_state.active || modal.active.is_some() || walk_mode.active {
+        return;
+    }
+
+    // Don't show gizmo hover in brush edit mode
+    if *edit_mode != crate::brush::EditMode::Object {
         return;
     }
 
@@ -227,9 +234,11 @@ fn handle_gizmo_drag(
     snap_settings: Res<SnapSettings>,
     modal: Res<ModalTransformState>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    edit_mode: Res<crate::brush::EditMode>,
+    walk_mode: Res<crate::viewport::WalkModeState>,
 ) {
-    // Suppress gizmo drag during modal operations
-    if modal.active.is_some() {
+    // Suppress gizmo drag during modal operations, brush edit mode, or walk mode
+    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object || walk_mode.active {
         if drag_state.active {
             drag_state.active = false;
         }
@@ -390,9 +399,11 @@ fn draw_gizmos(
     hover: Res<GizmoHoverState>,
     drag_state: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
+    edit_mode: Res<crate::brush::EditMode>,
+    walk_mode: Res<crate::viewport::WalkModeState>,
 ) {
-    // Hide gizmo during modal operations (modal_draw handles its own visuals)
-    if modal.active.is_some() {
+    // Hide gizmo during modal operations, brush edit mode, or walk mode
+    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object || walk_mode.active {
         return;
     }
 

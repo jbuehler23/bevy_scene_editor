@@ -383,6 +383,18 @@ fn add_component_displays(
                 continue;
             }
 
+            // Priority 3b: Brush — show face/vertex info
+            if type_id == TypeId::of::<crate::brush::Brush>() {
+                if let Some(brush) = reflected.downcast_ref::<crate::brush::Brush>() {
+                    spawn_brush_display(
+                        &mut commands,
+                        body_entity,
+                        brush,
+                    );
+                }
+                continue;
+            }
+
             // Priority 3: Generic reflection display
             spawn_reflected_fields(
                 &mut commands,
@@ -2975,6 +2987,41 @@ fn build_dynamic_variant(
 
 // ---------------------------------------------------------------------------
 // Custom Properties display
+// ---------------------------------------------------------------------------
+
+fn spawn_brush_display(
+    commands: &mut Commands,
+    parent: Entity,
+    brush: &crate::brush::Brush,
+) {
+    let (vertices, face_polygons) = crate::brush::compute_brush_geometry(&brush.faces);
+    let face_count = brush.faces.len();
+    let vertex_count = vertices.len();
+    let edge_count = {
+        let mut edges = std::collections::HashSet::new();
+        for polygon in &face_polygons {
+            for i in 0..polygon.len() {
+                let a = polygon[i];
+                let b = polygon[(i + 1) % polygon.len()];
+                let edge = if a < b { (a, b) } else { (b, a) };
+                edges.insert(edge);
+            }
+        }
+        edges.len()
+    };
+
+    let info = format!("{face_count} faces, {vertex_count} vertices, {edge_count} edges");
+    commands.spawn((
+        Text::new(info),
+        TextFont {
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        ChildOf(parent),
+    ));
+}
+
 // ---------------------------------------------------------------------------
 
 fn spawn_custom_properties_display(

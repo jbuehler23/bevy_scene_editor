@@ -2,11 +2,13 @@ use bevy::prelude::*;
 use editor_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRight};
 
 use crate::{
+    brush::{BrushEditMode, ClipState, EditMode, VertexDragState, VertexDragConstraint},
     gizmos::{GizmoMode, GizmoSpace},
     modal_transform::{ModalConstraint, ModalOp, ModalTransformState},
     scene_io::SceneFilePath,
     selection::{Selected, Selection},
     snapping::SnapSettings,
+    viewport::WalkModeState,
     EditorEntity,
 };
 
@@ -95,18 +97,65 @@ fn update_status_right(
     scene_path: Res<SceneFilePath>,
     snap_settings: Res<SnapSettings>,
     modal: Res<ModalTransformState>,
+    edit_mode: Res<EditMode>,
+    walk_mode: Res<WalkModeState>,
+    vertex_drag: Res<VertexDragState>,
+    clip_state: Res<ClipState>,
     mut text_query: Query<&mut Text, With<StatusBarRight>>,
 ) {
     if !mode.is_changed()
         && !space.is_changed()
         && !snap_settings.is_changed()
         && !modal.is_changed()
+        && !edit_mode.is_changed()
+        && !walk_mode.is_changed()
+        && !vertex_drag.is_changed()
+        && !clip_state.is_changed()
     {
         return;
     }
     let Ok(mut text) = text_query.single_mut() else {
         return;
     };
+
+    // Show walk mode status
+    if walk_mode.active {
+        text.0 = format!(
+            "WALK MODE: WASD move, QE up/down, Scroll speed ({:.1}) | LMB/Enter confirm, RMB/Esc cancel",
+            walk_mode.speed
+        );
+        return;
+    }
+
+    // Show brush edit mode info
+    if let EditMode::BrushEdit(sub_mode) = *edit_mode {
+        let sub_str = match sub_mode {
+            BrushEditMode::Face => "Face",
+            BrushEditMode::Vertex => "Vertex",
+            BrushEditMode::Edge => "Edge",
+            BrushEditMode::Clip => "Clip",
+        };
+        let extra = if vertex_drag.active {
+            let c = match vertex_drag.constraint {
+                VertexDragConstraint::Free => "Free",
+                VertexDragConstraint::AxisX => "X",
+                VertexDragConstraint::AxisY => "Y",
+                VertexDragConstraint::AxisZ => "Z",
+            };
+            format!(" | Dragging ({c}) X/Y/Z constrain")
+        } else if sub_mode == BrushEditMode::Clip {
+            let n = clip_state.points.len();
+            if n < 2 {
+                format!(" | Click {}-3 points, Enter apply, Esc cancel", n + 1)
+            } else {
+                " | Enter apply, Esc cancel".to_string()
+            }
+        } else {
+            String::new()
+        };
+        text.0 = format!("EDIT MODE: {sub_str} | 1 Vert  2 Edge  3 Face  4 Clip | ` exit | G grab  E extrude  Del remove{extra}");
+        return;
+    }
 
     // Show modal operation info when active
     if let Some(ref active) = modal.active {

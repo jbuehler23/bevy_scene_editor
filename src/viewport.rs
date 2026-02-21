@@ -1,6 +1,7 @@
 use bevy::{
     camera::RenderTarget,
     image::ImageSampler,
+    input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     ui::{widget::ViewportNode, UiGlobalTransform},
@@ -24,8 +25,15 @@ impl Plugin for ViewportPlugin {
             InfiniteGridPlugin,
         ))
         .init_resource::<CameraBookmarks>()
+        .init_resource::<WalkModeState>()
+        .init_resource::<OrbitCenterVisibility>()
         .add_systems(Startup, setup_viewport.after(crate::spawn_layout))
-        .add_systems(Update, (update_viewport_focus, handle_camera_keys));
+        .add_systems(Update, (
+            update_viewport_focus,
+            handle_camera_keys,
+            walk_mode_update,
+            draw_orbit_center,
+        ));
     }
 }
 
@@ -191,6 +199,7 @@ fn update_viewport_focus(
     viewport_node: Single<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     mut camera_query: Query<(Entity, &mut PanOrbitCamera)>,
     modal: Res<crate::modal_transform::ModalTransformState>,
+    walk_mode: Res<WalkModeState>,
     mut active_cam: ResMut<ActiveCameraData>,
 ) {
     // Use manual mode so the plugin doesn't overwrite our data
@@ -216,9 +225,9 @@ fn update_viewport_focus(
         && cursor_pos.y >= vp_top_left.y
         && cursor_pos.y <= vp_bottom_right.y;
 
-    // Disable camera orbit during modal operations (right-click = cancel, not orbit)
+    // Disable camera orbit during modal operations, walk mode (right-click = cancel, not orbit)
     let modal_active = modal.active.is_some();
-    let should_enable = hovered && !modal_active;
+    let should_enable = hovered && !modal_active && !walk_mode.active;
 
     for (entity, mut cam) in &mut camera_query {
         cam.enabled = should_enable;
@@ -229,6 +238,121 @@ fn update_viewport_focus(
                 window_size: Some(Vec2::new(window.width(), window.height())),
                 manual: true,
             };
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Walk mode (Shift+F, like Blender)
+// ---------------------------------------------------------------------------
+
+#[derive(Resource, Default)]
+pub struct WalkModeState {
+    pub active: bool,
+    pub speed: f32,
+    /// Camera transform when walk mode was entered (for cancel).
+    saved_transform: Option<Transform>,
+    saved_focus: Option<Vec3>,
+}
+
+fn walk_mode_update(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut mouse_motion: MessageReader<MouseMotion>,
+    mut scroll_events: MessageReader<MouseWheel>,
+    time: Res<Time>,
+    mut walk_mode: ResMut<WalkModeState>,
+    mut camera_query: Query<(&mut PanOrbitCamera, &mut Transform)>,
+) {
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // Enter walk mode: Shift+F
+    if !walk_mode.active {
+        if shift && keyboard.just_pressed(KeyCode::KeyF) {
+            walk_mode.active = true;
+            walk_mode.speed = 5.0;
+            for (cam, transform) in &camera_query {
+                walk_mode.saved_transform = Some(*transform);
+                walk_mode.saved_focus = Some(cam.focus);
+            }
+        }
+        return;
+    }
+
+    // Exit: Escape or right-click = cancel (restore saved transform)
+    if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
+        if let (Some(saved_tf), Some(saved_focus)) = (walk_mode.saved_transform, walk_mode.saved_focus) {
+            for (mut cam, mut transform) in &mut camera_query {
+                *transform = saved_tf;
+                cam.focus = saved_focus;
+            }
+        }
+        walk_mode.active = false;
+        return;
+    }
+
+    // Exit: left-click or Enter = confirm (keep current position)
+    if mouse.just_pressed(MouseButton::Left) || keyboard.just_pressed(KeyCode::Enter) {
+        // Update focus to be in front of camera
+        for (mut cam, transform) in &mut camera_query {
+            cam.focus = transform.translation + transform.forward().as_vec3() * 5.0;
+        }
+        walk_mode.active = false;
+        return;
+    }
+
+    // Scroll wheel adjusts speed
+    for event in scroll_events.read() {
+        let delta = match event.unit {
+            MouseScrollUnit::Line => event.y,
+            MouseScrollUnit::Pixel => event.y * 0.01,
+        };
+        walk_mode.speed = (walk_mode.speed * (1.0 + delta * 0.1)).clamp(0.5, 100.0);
+    }
+
+    // Mouse look (yaw/pitch)
+    let mut mouse_delta = Vec2::ZERO;
+    for motion in mouse_motion.read() {
+        mouse_delta += motion.delta;
+    }
+
+    let dt = time.delta_secs();
+
+    for (_cam, mut transform) in &mut camera_query {
+        // Apply mouse look
+        if mouse_delta != Vec2::ZERO {
+            let sensitivity = 0.003;
+            let (mut yaw, mut pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+            yaw -= mouse_delta.x * sensitivity;
+            pitch -= mouse_delta.y * sensitivity;
+            pitch = pitch.clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+            transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        }
+
+        // WASD + QE movement
+        let mut movement = Vec3::ZERO;
+        if keyboard.pressed(KeyCode::KeyW) {
+            movement += transform.forward().as_vec3();
+        }
+        if keyboard.pressed(KeyCode::KeyS) {
+            movement -= transform.forward().as_vec3();
+        }
+        if keyboard.pressed(KeyCode::KeyA) {
+            movement -= transform.right().as_vec3();
+        }
+        if keyboard.pressed(KeyCode::KeyD) {
+            movement += transform.right().as_vec3();
+        }
+        if keyboard.pressed(KeyCode::KeyE) {
+            movement += Vec3::Y;
+        }
+        if keyboard.pressed(KeyCode::KeyQ) {
+            movement -= Vec3::Y;
+        }
+
+        if movement != Vec3::ZERO {
+            let speed_mult = if shift { 2.0 } else { 1.0 };
+            transform.translation += movement.normalize() * walk_mode.speed * speed_mult * dt;
         }
     }
 }
@@ -249,20 +373,52 @@ pub struct CameraBookmark {
 }
 
 // ---------------------------------------------------------------------------
-// Camera key handling: F = focus on selected, 1-9 = bookmarks
+// Orbit center visibility (brief flash after change)
+// ---------------------------------------------------------------------------
+
+#[derive(Resource)]
+pub struct OrbitCenterVisibility {
+    pub timer: Timer,
+    pub active: bool,
+}
+
+impl Default for OrbitCenterVisibility {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(1.5, TimerMode::Once),
+            active: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Camera key handling: F = focus, Shift+F = walk, Numpad. = orbit center, bookmarks
 // ---------------------------------------------------------------------------
 
 fn handle_camera_keys(
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     selection: Res<Selection>,
     selected_transforms: Query<&GlobalTransform, With<Selected>>,
     mut camera_query: Query<(&mut PanOrbitCamera, &mut Transform)>,
     mut bookmarks: ResMut<CameraBookmarks>,
+    walk_mode: Res<WalkModeState>,
+    modal: Res<crate::modal_transform::ModalTransformState>,
+    mut orbit_vis: ResMut<OrbitCenterVisibility>,
+    windows: Query<&Window>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    camera_global: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
 ) {
-    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    // Don't handle camera keys during walk mode or modal transform (G/R/S)
+    if walk_mode.active || modal.active.is_some() {
+        return;
+    }
 
-    // F key: focus on selected entity
-    if keyboard.just_pressed(KeyCode::KeyF) {
+    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // F key (without Shift): focus on selected entity
+    if keyboard.just_pressed(KeyCode::KeyF) && !shift {
         if let Some(primary) = selection.primary() {
             if let Ok(global_tf) = selected_transforms.get(primary) {
                 let target = global_tf.translation();
@@ -275,6 +431,42 @@ fn handle_camera_keys(
                     transform.translation = target + dir * dist;
                 }
             }
+        }
+    }
+
+    // Numpad Period (.): center orbit on current selection (move focus only, keep distance)
+    if keyboard.just_pressed(KeyCode::NumpadDecimal) {
+        if let Some(primary) = selection.primary() {
+            if let Ok(global_tf) = selected_transforms.get(primary) {
+                let target = global_tf.translation();
+                for (mut cam, _) in &mut camera_query {
+                    cam.focus = target;
+                }
+                orbit_vis.active = true;
+                orbit_vis.timer.reset();
+            }
+        }
+    }
+
+    // Shift+Middle Click: set orbit center to 3D point under cursor
+    if shift && mouse.just_pressed(MouseButton::Middle) {
+        let Ok(window) = windows.single() else {
+            return;
+        };
+        let Some(cursor_pos) = window.cursor_position() else {
+            return;
+        };
+        let Ok((camera, cam_tf)) = camera_global.single() else {
+            return;
+        };
+
+        // Try ground plane intersection
+        if let Some(hit_point) = cursor_to_ground_plane(cursor_pos, camera, cam_tf, &viewport_query) {
+            for (mut cam, _) in &mut camera_query {
+                cam.focus = hit_point;
+            }
+            orbit_vis.active = true;
+            orbit_vis.timer.reset();
         }
     }
 
@@ -312,4 +504,48 @@ fn handle_camera_keys(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Orbit center marker gizmo
+// ---------------------------------------------------------------------------
+
+fn draw_orbit_center(
+    camera_query: Query<&PanOrbitCamera>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut orbit_vis: ResMut<OrbitCenterVisibility>,
+    time: Res<Time>,
+    mut gizmos: Gizmos,
+) {
+    let Ok(cam) = camera_query.single() else {
+        return;
+    };
+
+    // Show while middle-mouse is held (orbiting) or during visibility timer
+    let orbiting = mouse.pressed(MouseButton::Middle);
+
+    orbit_vis.timer.tick(time.delta());
+    let timer_active = orbit_vis.active && !orbit_vis.timer.is_finished();
+
+    if !orbiting && !timer_active {
+        if orbit_vis.active && orbit_vis.timer.is_finished() {
+            orbit_vis.active = false;
+        }
+        return;
+    }
+
+    let focus = cam.focus;
+    let size = 0.1;
+    let alpha = if timer_active && !orbiting {
+        // Fade out over the last 0.5 seconds
+        let remaining = orbit_vis.timer.remaining_secs();
+        (remaining / 0.5).min(1.0)
+    } else {
+        0.6
+    };
+
+    let color = Color::srgba(1.0, 1.0, 1.0, alpha);
+    gizmos.line(focus - Vec3::X * size, focus + Vec3::X * size, color);
+    gizmos.line(focus - Vec3::Y * size, focus + Vec3::Y * size, color);
+    gizmos.line(focus - Vec3::Z * size, focus + Vec3::Z * size, color);
 }

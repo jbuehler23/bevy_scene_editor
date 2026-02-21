@@ -1,4 +1,5 @@
 pub mod asset_browser;
+pub mod brush;
 pub mod commands;
 pub mod custom_properties;
 pub mod entity_ops;
@@ -66,8 +67,10 @@ impl Plugin for EditorPlugin {
             modal_transform::ModalTransformPlugin,
             custom_properties::CustomPropertiesPlugin,
             entity_templates::EntityTemplatesPlugin,
+            brush::BrushPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
+        .init_resource::<layout::KeybindHelpPopover>()
         .add_systems(Startup, (spawn_layout, populate_menu).chain())
         .add_systems(
             Update,
@@ -90,7 +93,7 @@ fn auto_hide_internal_entities(
     mut commands: Commands,
     new_entities: Query<
         (Entity, Option<&Name>, Option<&ChildOf>),
-        (Added<Transform>, Without<EditorEntity>, Without<EditorHidden>),
+        (Added<Transform>, Without<EditorEntity>, Without<EditorHidden>, Without<brush::BrushFaceEntity>),
     >,
     parent_query: Query<&ChildOf>,
     gltf_sources: Query<(), With<entity_ops::GltfSource>>,
@@ -174,6 +177,7 @@ fn populate_menu(world: &mut World) {
                 vec![
                     ("add.cube", "Cube"),
                     ("add.sphere", "Sphere"),
+                    ("add.brush", "Brush"),
                     ("---", ""),
                     ("add.point_light", "Point Light"),
                     ("add.directional_light", "Directional Light"),
@@ -292,6 +296,14 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                 entity_ops::create_entity_in_world(
                     world,
                     entity_ops::EntityTemplate::Camera3d,
+                );
+            });
+        }
+        "add.brush" => {
+            commands.queue(|world: &mut World| {
+                entity_ops::create_entity_in_world(
+                    world,
+                    entity_ops::EntityTemplate::BrushCuboid,
                 );
             });
         }

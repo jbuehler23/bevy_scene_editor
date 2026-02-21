@@ -105,8 +105,14 @@ fn modal_activate(
     mut gizmo_mode: ResMut<GizmoMode>,
     windows: Query<&Window>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+    edit_mode: Res<crate::brush::EditMode>,
 ) {
     if modal.active.is_some() || gizmo_drag.active || input_focus.0.is_some() {
+        return;
+    }
+
+    // Don't start modal transforms in brush edit mode — brush.rs handles G/R/S
+    if *edit_mode != crate::brush::EditMode::Object {
         return;
     }
 

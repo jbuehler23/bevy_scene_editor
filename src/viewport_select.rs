@@ -1,4 +1,8 @@
-use bevy::{prelude::*, ui::UiGlobalTransform};
+use bevy::{
+    picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
+    prelude::*,
+    ui::UiGlobalTransform,
+};
 use bevy::input_focus::InputFocus;
 use bevy_panorbit_camera::PanOrbitCamera;
 use editor_feathers::context_menu::spawn_context_menu;
@@ -52,18 +56,24 @@ fn handle_viewport_click(
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    parents: Query<&ChildOf>,
     gizmo_drag: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
     vp_drag: Res<ViewportDragState>,
     mut selection: ResMut<Selection>,
     mut input_focus: ResMut<InputFocus>,
     mut commands: Commands,
+    edit_mode: Res<crate::brush::EditMode>,
+    walk_mode: Res<crate::viewport::WalkModeState>,
+    mut ray_cast: MeshRayCast,
 ) {
-    // Don't select during gizmo drag, modal ops, or viewport drag
+    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, or walk mode
     if !mouse.just_pressed(MouseButton::Left)
         || gizmo_drag.active
         || modal.active.is_some()
         || vp_drag.active.is_some()
+        || *edit_mode != crate::brush::EditMode::Object
+        || walk_mode.active
     {
         return;
     }
@@ -99,17 +109,34 @@ fn handle_viewport_click(
         return;
     };
 
-    // Find the closest entity to the click position via screen-space proximity
+    // Try mesh raycast first for accurate geometry-based selection
     let mut best_entity = None;
-    let mut best_dist = 30.0_f32; // Max pixel distance to select
 
-    for (entity, global_tf) in &scene_entities {
-        let pos = global_tf.translation();
-        if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
-            let dist = (screen_pos - local_cursor).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best_entity = Some(entity);
+    if let Ok(ray) = camera.viewport_to_world(cam_tf, local_cursor) {
+        let settings = MeshRayCastSettings::default()
+            .with_visibility(RayCastVisibility::Any);
+        let hits = ray_cast.cast_ray(ray, &settings);
+
+        // Find the first hit that resolves to a scene entity (skip editor entities)
+        for (hit_entity, _) in hits {
+            if let Some(ancestor) = find_selectable_ancestor(*hit_entity, &scene_entities, &parents) {
+                best_entity = Some(ancestor);
+                break;
+            }
+        }
+    }
+
+    // Fall back to screen-space proximity for non-mesh entities (lights, empties)
+    if best_entity.is_none() {
+        let mut best_dist = 30.0_f32;
+        for (entity, global_tf) in &scene_entities {
+            let pos = global_tf.translation();
+            if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
+                let dist = (screen_pos - local_cursor).length();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_entity = Some(entity);
+                }
             }
         }
     }
@@ -223,11 +250,13 @@ fn handle_viewport_right_click(
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    parents: Query<&ChildOf>,
     gizmo_drag: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
     mut state: ResMut<ContextMenuState>,
     mut selection: ResMut<Selection>,
     mut commands: Commands,
+    mut ray_cast: MeshRayCast,
 ) {
     if !mouse.just_pressed(MouseButton::Right) || gizmo_drag.active || modal.active.is_some() {
         return;
@@ -261,17 +290,33 @@ fn handle_viewport_right_click(
         return;
     };
 
-    // Find the closest entity to the click position via screen-space proximity
+    // Try mesh raycast first
     let mut best_entity = None;
-    let mut best_dist = 30.0_f32;
 
-    for (entity, global_tf) in &scene_entities {
-        let pos = global_tf.translation();
-        if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
-            let dist = (screen_pos - local_cursor).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best_entity = Some(entity);
+    if let Ok(ray) = camera.viewport_to_world(cam_tf, local_cursor) {
+        let settings = MeshRayCastSettings::default()
+            .with_visibility(RayCastVisibility::Any);
+        let hits = ray_cast.cast_ray(ray, &settings);
+
+        for (hit_entity, _) in hits {
+            if let Some(ancestor) = find_selectable_ancestor(*hit_entity, &scene_entities, &parents) {
+                best_entity = Some(ancestor);
+                break;
+            }
+        }
+    }
+
+    // Fall back to proximity for non-mesh entities
+    if best_entity.is_none() {
+        let mut best_dist = 30.0_f32;
+        for (entity, global_tf) in &scene_entities {
+            let pos = global_tf.translation();
+            if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, pos) {
+                let dist = (screen_pos - local_cursor).length();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_entity = Some(entity);
+                }
             }
         }
     }
@@ -337,5 +382,41 @@ fn on_viewport_context_menu_action(
             });
         }
         _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Walk up the `ChildOf` hierarchy from a raycast hit entity to find the
+/// top-level scene entity (one that appears in `scene_entities`).
+/// Handles GLTF child meshes and brush face children.
+fn find_selectable_ancestor(
+    mut entity: Entity,
+    scene_entities: &Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    // Walk up until we find a scene entity (one that has Transform and is not EditorEntity)
+    // Start with the hit entity itself — it may already be a scene entity
+    loop {
+        if scene_entities.contains(entity) {
+            // Check if this entity has a parent that's also a scene entity;
+            // if so, prefer the parent (handles GLTF sub-meshes).
+            if let Ok(child_of) = parents.get(entity) {
+                let parent = child_of.0;
+                if scene_entities.contains(parent) {
+                    // Keep walking up — the parent is also selectable
+                    entity = parent;
+                    continue;
+                }
+            }
+            return Some(entity);
+        }
+        if let Ok(child_of) = parents.get(entity) {
+            entity = child_of.0;
+        } else {
+            return None;
+        }
     }
 }

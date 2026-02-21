@@ -6,7 +6,7 @@ use bevy::{
     prelude::*,
     ui_widgets::observe,
 };
-use editor_feathers::{icons::{Icon, IconFont}, menu_bar, panel_header, separator, split_panel, status_bar, text_input, tokens, tree_view::tree_container_drop_observers};
+use editor_feathers::{icons::{Icon, IconFont}, menu_bar, panel_header, popover, separator, split_panel, status_bar, text_input, tokens, tree_view::tree_container_drop_observers};
 
 use crate::{
     EditorEntity,
@@ -33,6 +33,16 @@ pub struct GizmoModeButton(pub GizmoMode);
 /// Marker for gizmo space toggle
 #[derive(Component)]
 pub struct GizmoSpaceButton;
+
+/// Marker for keybind helper button
+#[derive(Component)]
+pub struct KeybindHelpButton;
+
+/// Resource tracking the keybind help popover entity
+#[derive(Resource, Default)]
+pub struct KeybindHelpPopover {
+    pub entity: Option<Entity>,
+}
 
 pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
     let font = icon_font.0.clone();
@@ -138,8 +148,18 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
             // Entity creation
             toolbar_create_button(Icon::Box, "Cube", EntityTemplate::Mesh3dCube, f.clone()),
             toolbar_create_button(Icon::Circle, "Sphere", EntityTemplate::Mesh3dSphere, f.clone()),
+            toolbar_create_button(Icon::Cuboid, "Brush", EntityTemplate::BrushCuboid, f.clone()),
             toolbar_create_button(Icon::Lightbulb, "Light", EntityTemplate::PointLight, f.clone()),
-            toolbar_create_button(Icon::Plus, "Empty", EntityTemplate::Empty, f),
+            toolbar_create_button(Icon::Plus, "Empty", EntityTemplate::Empty, f.clone()),
+            // Spacer pushes help button to the right
+            (
+                Node {
+                    flex_grow: 1.0,
+                    ..Default::default()
+                },
+            ),
+            // Keybind help button
+            toolbar_help_button(f),
         ],
     )
 }
@@ -265,6 +285,156 @@ fn toolbar_create_button(icon: Icon, label: &str, template: EntityTemplate, font
             },
         ),
     )
+}
+
+fn toolbar_help_button(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        KeybindHelpButton,
+        Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(px(tokens::SPACING_MD), px(tokens::SPACING_XS)),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_SM)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::TOOLBAR_BUTTON_BG),
+        children![(
+            Text::new(String::from(Icon::Keyboard.unicode())),
+            TextFont {
+                font: icon_font,
+                font_size: tokens::FONT_MD,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_SECONDARY),
+        )],
+        observe(
+            |trigger: On<Pointer<Click>>,
+             mut commands: Commands,
+             mut popover_state: ResMut<KeybindHelpPopover>| {
+                // Toggle: if popover exists, despawn it
+                if let Some(entity) = popover_state.entity.take() {
+                    if let Ok(mut ec) = commands.get_entity(entity) {
+                        ec.despawn();
+                    }
+                    return;
+                }
+
+                let anchor = trigger.event_target();
+
+                let popover_entity = commands
+                    .spawn(popover::popover(
+                        popover::PopoverProps::new(anchor)
+                            .with_placement(popover::PopoverPlacement::BottomEnd)
+                            .with_padding(12.0)
+                            .with_z_index(200),
+                    ))
+                    .with_children(|parent| {
+                        spawn_keybind_help_content(parent);
+                    })
+                    .id();
+
+                popover_state.entity = Some(popover_entity);
+            },
+        ),
+    )
+}
+
+fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
+    let sections: &[(&str, &[(&str, &str)])] = &[
+        (
+            "Navigation",
+            &[
+                ("MMB", "Orbit"),
+                ("Shift+MMB", "Pan"),
+                ("Scroll", "Zoom"),
+                ("Shift+F", "Walk mode"),
+                ("F", "Focus selected"),
+                ("Numpad .", "Orbit to selection"),
+                ("Shift+MMB click", "Set orbit center"),
+            ],
+        ),
+        (
+            "Transform",
+            &[
+                ("W", "Translate mode"),
+                ("E", "Rotate mode"),
+                ("R", "Scale mode"),
+                ("X", "Toggle space"),
+                ("G", "Grab (modal)"),
+                ("S", "Scale (modal)"),
+                ("R", "Rotate (modal)"),
+                ("X/Y/Z", "Axis constraint"),
+            ],
+        ),
+        (
+            "Brush Edit",
+            &[
+                ("`", "Enter/exit edit"),
+                ("1", "Vertex mode"),
+                ("2", "Edge mode"),
+                ("3", "Face mode"),
+                ("G", "Grab"),
+                ("X/Y/Z", "Constrain axis"),
+            ],
+        ),
+        (
+            "General",
+            &[
+                ("Ctrl+Z", "Undo"),
+                ("Ctrl+Shift+Z", "Redo"),
+                ("Delete", "Delete"),
+                ("Ctrl+D", "Duplicate"),
+                ("Ctrl+S", "Save"),
+                ("Ctrl+O", "Open"),
+            ],
+        ),
+    ];
+
+    for (section_title, bindings) in sections {
+        // Section header
+        parent.spawn((
+            Text::new(*section_title),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_PRIMARY),
+            Node {
+                margin: UiRect::top(px(tokens::SPACING_SM)),
+                ..Default::default()
+            },
+        ));
+
+        for (key, desc) in *bindings {
+            parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: px(tokens::SPACING_LG),
+                    width: px(220.0),
+                    ..Default::default()
+                },
+                children![
+                    (
+                        Text::new(*key),
+                        TextFont {
+                            font_size: tokens::FONT_SM,
+                            ..Default::default()
+                        },
+                        TextColor(tokens::TEXT_PRIMARY),
+                    ),
+                    (
+                        Text::new(*desc),
+                        TextFont {
+                            font_size: tokens::FONT_SM,
+                            ..Default::default()
+                        },
+                        TextColor(tokens::TEXT_SECONDARY),
+                    )
+                ],
+            ));
+        }
+    }
 }
 
 fn entity_heiarchy() -> impl Bundle {
