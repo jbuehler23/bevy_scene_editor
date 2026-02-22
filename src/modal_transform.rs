@@ -108,13 +108,14 @@ fn modal_activate(
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
+    draw_state: Res<crate::draw_brush::DrawBrushState>,
 ) {
     if modal.active.is_some() || gizmo_drag.active || input_focus.0.is_some() {
         return;
     }
 
-    // Don't start modal transforms in brush edit mode — brush.rs handles G/R/S
-    if *edit_mode != crate::brush::EditMode::Object {
+    // Don't start modal transforms in brush edit mode or draw mode
+    if *edit_mode != crate::brush::EditMode::Object || draw_state.active.is_some() {
         return;
     }
 

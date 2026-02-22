@@ -379,7 +379,7 @@ impl EditorCommand for DespawnEntity {
 }
 
 /// Create a DynamicScene snapshot of a single entity and all its descendants.
-fn snapshot_entity(world: &World, entity: Entity) -> DynamicScene {
+pub(crate) fn snapshot_entity(world: &World, entity: Entity) -> DynamicScene {
     let mut entities = Vec::new();
     collect_entity_ids(world, entity, &mut entities);
     DynamicSceneBuilder::from_world(world)
@@ -399,7 +399,7 @@ pub fn collect_entity_ids(world: &World, entity: Entity, out: &mut Vec<Entity>) 
 }
 
 /// Rebuild a DynamicScene by copying its entity data (since DynamicScene doesn't impl Clone).
-fn snapshot_rebuild(scene: &DynamicScene) -> DynamicScene {
+pub(crate) fn snapshot_rebuild(scene: &DynamicScene) -> DynamicScene {
     DynamicScene {
         resources: scene
             .resources

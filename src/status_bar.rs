@@ -3,6 +3,7 @@ use editor_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRight
 
 use crate::{
     brush::{BrushEditMode, ClipState, EditMode, VertexDragState, VertexDragConstraint},
+    draw_brush::{DrawBrushState, DrawPhase},
     gizmos::{GizmoMode, GizmoSpace},
     modal_transform::{ModalConstraint, ModalOp, ModalTransformState},
     scene_io::SceneFilePath,
@@ -101,6 +102,7 @@ fn update_status_right(
     walk_mode: Res<WalkModeState>,
     vertex_drag: Res<VertexDragState>,
     clip_state: Res<ClipState>,
+    draw_state: Res<DrawBrushState>,
     mut text_query: Query<&mut Text, With<StatusBarRight>>,
 ) {
     if !mode.is_changed()
@@ -111,12 +113,32 @@ fn update_status_right(
         && !walk_mode.is_changed()
         && !vertex_drag.is_changed()
         && !clip_state.is_changed()
+        && !draw_state.is_changed()
     {
         return;
     }
     let Ok(mut text) = text_query.single_mut() else {
         return;
     };
+
+    // Show draw brush mode status
+    if let Some(ref active) = draw_state.active {
+        text.0 = match active.phase {
+            DrawPhase::PlacingFirstCorner => {
+                "DRAW BRUSH: Click to place first corner (Ctrl lock plane) | Esc cancel".to_string()
+            }
+            DrawPhase::DrawingFootprint => {
+                "DRAW BRUSH: Move to size, click to lock footprint | Esc cancel".to_string()
+            }
+            DrawPhase::ExtrudingDepth => {
+                format!(
+                    "DRAW BRUSH: Move for depth ({:.2}), click to create | Esc cancel",
+                    active.depth
+                )
+            }
+        };
+        return;
+    }
 
     // Show walk mode status
     if walk_mode.active {

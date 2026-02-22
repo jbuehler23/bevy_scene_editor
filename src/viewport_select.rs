@@ -63,17 +63,21 @@ fn handle_viewport_click(
     mut selection: ResMut<Selection>,
     mut input_focus: ResMut<InputFocus>,
     mut commands: Commands,
-    edit_mode: Res<crate::brush::EditMode>,
-    walk_mode: Res<crate::viewport::WalkModeState>,
+    (edit_mode, walk_mode, draw_state): (
+        Res<crate::brush::EditMode>,
+        Res<crate::viewport::WalkModeState>,
+        Res<crate::draw_brush::DrawBrushState>,
+    ),
     mut ray_cast: MeshRayCast,
 ) {
-    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, or walk mode
+    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, walk mode, or draw mode
     if !mouse.just_pressed(MouseButton::Left)
         || gizmo_drag.active
         || modal.active.is_some()
         || vp_drag.active.is_some()
         || *edit_mode != crate::brush::EditMode::Object
         || walk_mode.active
+        || draw_state.active.is_some()
     {
         return;
     }
@@ -261,12 +265,13 @@ fn handle_viewport_right_click(
     parents: Query<&ChildOf>,
     gizmo_drag: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
+    draw_state: Res<crate::draw_brush::DrawBrushState>,
     mut state: ResMut<ContextMenuState>,
     mut selection: ResMut<Selection>,
     mut commands: Commands,
     mut ray_cast: MeshRayCast,
 ) {
-    if !mouse.just_pressed(MouseButton::Right) || gizmo_drag.active || modal.active.is_some() {
+    if !mouse.just_pressed(MouseButton::Right) || gizmo_drag.active || modal.active.is_some() || draw_state.active.is_some() {
         return;
     }
 

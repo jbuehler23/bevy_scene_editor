@@ -2,6 +2,7 @@ pub mod asset_browser;
 pub mod brush;
 pub mod commands;
 pub mod custom_properties;
+pub mod draw_brush;
 pub mod entity_ops;
 pub mod entity_templates;
 pub mod gizmos;
@@ -70,6 +71,7 @@ impl Plugin for EditorPlugin {
             entity_templates::EntityTemplatesPlugin,
             brush::BrushPlugin,
             texture_browser::TextureBrowserPlugin,
+            draw_brush::DrawBrushPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
         .init_resource::<layout::KeybindHelpPopover>()
