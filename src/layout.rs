@@ -15,6 +15,7 @@ use crate::{
     gizmos::{GizmoMode, GizmoSpace},
     hierarchy::{HierarchyPanel, HierarchyTreeContainer},
     inspector::Inspector,
+    texture_browser,
     viewport::SceneViewport,
 };
 
@@ -68,13 +69,13 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                     flex_direction: FlexDirection::Column,
                     ..Default::default()
                 },
-                // Vertical split: main area (top) + asset browser (bottom)
+                // Vertical split: main area (top) + bottom panels (bottom)
                 split_panel::panel_group(
                     0.15,
                     (
                         Spawn((split_panel::panel(4), main_area(font))),
                         Spawn(split_panel::panel_handle()),
-                        Spawn((split_panel::panel(1), asset_browser::asset_browser_panel())),
+                        Spawn((split_panel::panel(1), bottom_panels())),
                     ),
                 ),
             ),
@@ -527,6 +528,26 @@ pub fn update_space_toggle_label(
     }
 }
 
+fn bottom_panels() -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            ..Default::default()
+        },
+        // Horizontal split: asset browser | handle | texture browser
+        split_panel::panel_group(
+            0.15,
+            (
+                Spawn((split_panel::panel(1), asset_browser::asset_browser_panel())),
+                Spawn(split_panel::panel_handle()),
+                Spawn((split_panel::panel(1), texture_browser::texture_browser_panel())),
+            ),
+        ),
+    )
+}
+
 fn entity_inspector() -> impl Bundle {
     (
         Node {
@@ -548,7 +569,7 @@ fn entity_inspector() -> impl Bundle {
                     padding: UiRect::all(px(tokens::SPACING_SM)),
                     ..Default::default()
                 }
-            )
+            ),
         ],
     )
 }

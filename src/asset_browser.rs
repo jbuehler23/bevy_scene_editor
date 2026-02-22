@@ -7,7 +7,11 @@ use bevy::{
 use editor_feathers::{file_browser, icons::IconFont, tokens};
 use editor_widgets::file_browser::{FileBrowserItem, FileItemDoubleClicked};
 
-use crate::EditorEntity;
+use crate::{
+    brush::{BrushEditMode, BrushSelection, EditMode},
+    texture_browser::{ApplyTextureToFaces, to_asset_relative_path},
+    EditorEntity,
+};
 
 pub struct AssetBrowserPlugin;
 
@@ -231,11 +235,37 @@ fn refresh_browser_on_change(
 fn handle_file_double_click(
     event: On<FileItemDoubleClicked>,
     mut state: ResMut<AssetBrowserState>,
+    edit_mode: Res<EditMode>,
+    brush_selection: Res<BrushSelection>,
+    mut commands: Commands,
 ) {
     if event.is_directory {
         state.current_directory = PathBuf::from(&event.path);
         state.needs_refresh = true;
+        return;
     }
+
+    // If in face edit mode with faces selected and double-clicking an image, apply it
+    if *edit_mode == EditMode::BrushEdit(BrushEditMode::Face)
+        && !brush_selection.faces.is_empty()
+        && brush_selection.entity.is_some()
+    {
+        if is_image_file(&event.path) {
+            if let Some(relative) = to_asset_relative_path(&event.path) {
+                commands.trigger(ApplyTextureToFaces { path: relative });
+            }
+        }
+    }
+}
+
+fn is_image_file(path: &str) -> bool {
+    let path_lower = path.to_lowercase();
+    path_lower.ends_with(".png")
+        || path_lower.ends_with(".jpg")
+        || path_lower.ends_with(".jpeg")
+        || path_lower.ends_with(".bmp")
+        || path_lower.ends_with(".tga")
+        || path_lower.ends_with(".webp")
 }
 
 // ---------------------------------------------------------------------------

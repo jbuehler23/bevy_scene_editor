@@ -31,10 +31,20 @@ impl Plugin for ViewportOverlaysPlugin {
     }
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BoundingBoxMode {
+    /// Simple axis-aligned bounding box (12 edges).
+    #[default]
+    Aabb,
+    /// Full convex hull wireframe showing all geometry edges.
+    ConvexHull,
+}
+
 #[derive(Resource)]
 pub struct OverlaySettings {
     pub show_bounding_boxes: bool,
     pub show_coordinate_indicator: bool,
+    pub bounding_box_mode: BoundingBoxMode,
 }
 
 impl Default for OverlaySettings {
@@ -42,11 +52,12 @@ impl Default for OverlaySettings {
         Self {
             show_bounding_boxes: true,
             show_coordinate_indicator: true,
+            bounding_box_mode: BoundingBoxMode::default(),
         }
     }
 }
 
-/// Draw convex hull wireframes around selected entities with geometry.
+/// Draw bounding boxes around selected entities with geometry.
 fn draw_selection_bounding_boxes(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
@@ -62,54 +73,113 @@ fn draw_selection_bounding_boxes(
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
 
     for (entity, global_tf, maybe_brush_cache) in &selected {
-        // 1. Brush: use BrushMeshCache vertices + face polygons directly
-        if let Some(cache) = maybe_brush_cache {
+        // Collect world-space vertices
+        let world_verts = if let Some(cache) = maybe_brush_cache {
             if cache.vertices.is_empty() {
                 continue;
             }
-            let world_verts: Vec<Vec3> = cache
-                .vertices
-                .iter()
-                .map(|v| global_tf.transform_point(*v))
-                .collect();
-            draw_hull_wireframe(&mut gizmos, &world_verts, &cache.face_polygons, color);
-            continue;
-        }
+            match settings.bounding_box_mode {
+                BoundingBoxMode::ConvexHull => {
+                    // Convex hull mode for brushes: use face polygons directly
+                    let verts: Vec<Vec3> = cache
+                        .vertices
+                        .iter()
+                        .map(|v| global_tf.transform_point(*v))
+                        .collect();
+                    draw_hull_wireframe(&mut gizmos, &verts, &cache.face_polygons, color);
+                    continue;
+                }
+                BoundingBoxMode::Aabb => {
+                    cache
+                        .vertices
+                        .iter()
+                        .map(|v| global_tf.transform_point(*v))
+                        .collect::<Vec<Vec3>>()
+                }
+            }
+        } else {
+            let mut verts = Vec::new();
+            collect_descendant_mesh_world_vertices(
+                entity,
+                &children_query,
+                &mesh_query,
+                &meshes,
+                &mut verts,
+            );
+            if verts.is_empty() {
+                continue;
+            }
+            verts
+        };
 
-        // 2. Mesh entities: collect world-space vertices, compute convex hull
-        let mut world_verts = Vec::new();
-        collect_descendant_mesh_world_vertices(
-            entity,
-            &children_query,
-            &mesh_query,
-            &meshes,
-            &mut world_verts,
-        );
-        if world_verts.is_empty() {
-            // No geometry — type-specific gizmo systems handle the rest
-            continue;
-        }
+        match settings.bounding_box_mode {
+            BoundingBoxMode::Aabb => {
+                let (min, max) = aabb_from_points(&world_verts);
+                draw_aabb_wireframe(&mut gizmos, min, max, color);
+            }
+            BoundingBoxMode::ConvexHull => {
+                let parry_points: Vec<ParryPoint<f32>> = world_verts
+                    .iter()
+                    .map(|v| ParryPoint::new(v.x, v.y, v.z))
+                    .collect();
+                let (hull_verts, hull_tris) = convex_hull(&parry_points);
+                if hull_verts.is_empty() || hull_tris.is_empty() {
+                    continue;
+                }
 
-        let parry_points: Vec<ParryPoint<f32>> = world_verts
-            .iter()
-            .map(|v| ParryPoint::new(v.x, v.y, v.z))
-            .collect();
-        let (hull_verts, hull_tris) = convex_hull(&parry_points);
-        if hull_verts.is_empty() || hull_tris.is_empty() {
-            continue;
+                let hull_positions: Vec<Vec3> = hull_verts
+                    .iter()
+                    .map(|p| Vec3::new(p.x, p.y, p.z))
+                    .collect();
+                let hull_faces = brush::merge_hull_triangles(&hull_positions, &hull_tris);
+                let face_polygons: Vec<Vec<usize>> = hull_faces
+                    .into_iter()
+                    .map(|f| f.vertex_indices)
+                    .collect();
+                draw_hull_wireframe(&mut gizmos, &hull_positions, &face_polygons, color);
+            }
         }
-
-        let hull_positions: Vec<Vec3> = hull_verts
-            .iter()
-            .map(|p| Vec3::new(p.x, p.y, p.z))
-            .collect();
-        let hull_faces = brush::merge_hull_triangles(&hull_positions, &hull_tris);
-        let face_polygons: Vec<Vec<usize>> = hull_faces
-            .into_iter()
-            .map(|f| f.vertex_indices)
-            .collect();
-        draw_hull_wireframe(&mut gizmos, &hull_positions, &face_polygons, color);
     }
+}
+
+/// Compute axis-aligned bounding box from a set of points.
+fn aabb_from_points(points: &[Vec3]) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    for &p in points {
+        min = min.min(p);
+        max = max.max(p);
+    }
+    (min, max)
+}
+
+/// Draw 12 edges of an axis-aligned bounding box.
+fn draw_aabb_wireframe(gizmos: &mut Gizmos, min: Vec3, max: Vec3, color: Color) {
+    let corners = [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(min.x, min.y, max.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(max.x, max.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+    ];
+    // Bottom face
+    gizmos.line(corners[0], corners[1], color);
+    gizmos.line(corners[1], corners[2], color);
+    gizmos.line(corners[2], corners[3], color);
+    gizmos.line(corners[3], corners[0], color);
+    // Top face
+    gizmos.line(corners[4], corners[5], color);
+    gizmos.line(corners[5], corners[6], color);
+    gizmos.line(corners[6], corners[7], color);
+    gizmos.line(corners[7], corners[4], color);
+    // Vertical edges
+    gizmos.line(corners[0], corners[4], color);
+    gizmos.line(corners[1], corners[5], color);
+    gizmos.line(corners[2], corners[6], color);
+    gizmos.line(corners[3], corners[7], color);
 }
 
 /// Draw unique edges from face polygons as wireframe lines.

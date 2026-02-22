@@ -13,6 +13,7 @@ pub mod scene_io;
 pub mod selection;
 pub mod snapping;
 pub mod status_bar;
+pub mod texture_browser;
 pub mod view_modes;
 pub mod viewport;
 pub mod viewport_overlays;
@@ -68,6 +69,7 @@ impl Plugin for EditorPlugin {
             custom_properties::CustomPropertiesPlugin,
             entity_templates::EntityTemplatesPlugin,
             brush::BrushPlugin,
+            texture_browser::TextureBrowserPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
         .init_resource::<layout::KeybindHelpPopover>()
@@ -157,6 +159,7 @@ fn populate_menu(world: &mut World) {
                 vec![
                     ("view.wireframe", "Toggle Wireframe"),
                     ("view.bounding_boxes", "Toggle Bounding Boxes"),
+                    ("view.bounding_box_mode", "Cycle Bounding Box Mode"),
                 ],
             ),
             (
@@ -235,6 +238,20 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                 let mut settings =
                     world.resource_mut::<viewport_overlays::OverlaySettings>();
                 settings.show_bounding_boxes = !settings.show_bounding_boxes;
+            });
+        }
+        "view.bounding_box_mode" => {
+            commands.queue(|world: &mut World| {
+                let mut settings =
+                    world.resource_mut::<viewport_overlays::OverlaySettings>();
+                settings.bounding_box_mode = match settings.bounding_box_mode {
+                    viewport_overlays::BoundingBoxMode::Aabb => {
+                        viewport_overlays::BoundingBoxMode::ConvexHull
+                    }
+                    viewport_overlays::BoundingBoxMode::ConvexHull => {
+                        viewport_overlays::BoundingBoxMode::Aabb
+                    }
+                };
             });
         }
         "add.cube" => {
