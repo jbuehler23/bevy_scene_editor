@@ -53,7 +53,7 @@ fn handle_viewport_click(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
     parents: Query<&ChildOf>,
@@ -108,6 +108,10 @@ fn handle_viewport_click(
     let Ok((camera, cam_tf)) = camera_query.single() else {
         return;
     };
+
+    // Remap from UI-logical space to camera render-target space
+    let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
+    let local_cursor = local_cursor * target_size / vp_size;
 
     // Try mesh raycast first for accurate geometry-based selection
     let mut best_entity = None;
@@ -166,7 +170,7 @@ fn handle_box_select(
     _keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
     mut box_state: ResMut<BoxSelectState>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     gizmo_drag: Res<GizmoDragState>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
@@ -212,9 +216,11 @@ fn handle_box_select(
             let vp_size = vp_computed.size() * scale;
             let vp_top_left = vp_pos - vp_size / 2.0;
 
-            // Convert box to viewport-local coords
-            let min = (box_state.start - vp_top_left).min(box_state.current - vp_top_left);
-            let max = (box_state.start - vp_top_left).max(box_state.current - vp_top_left);
+            // Convert box to viewport-local coords, then remap to camera space
+            let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
+            let remap = target_size / vp_size;
+            let min = (box_state.start - vp_top_left).min(box_state.current - vp_top_left) * remap;
+            let max = (box_state.start - vp_top_left).max(box_state.current - vp_top_left) * remap;
 
             // Find entities within the box
             let mut selected_entities = Vec::new();
@@ -247,7 +253,7 @@ fn handle_box_select(
 fn handle_viewport_right_click(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
     parents: Query<&ChildOf>,
@@ -289,6 +295,10 @@ fn handle_viewport_right_click(
     let Ok((camera, cam_tf)) = camera_query.single() else {
         return;
     };
+
+    // Remap from UI-logical space to camera render-target space
+    let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
+    let local_cursor = local_cursor * target_size / vp_size;
 
     // Try mesh raycast first
     let mut best_entity = None;
@@ -363,10 +373,12 @@ fn on_viewport_context_menu_action(
                     let scale = global_tf.compute_transform().scale;
                     let dist = (scale.length() * 3.0).max(5.0);
 
-                    for (mut cam, mut transform) in &mut camera_query {
+                    for (mut cam, _) in &mut camera_query {
+                        cam.target_focus = target_pos;
                         cam.focus = target_pos;
-                        let dir = (transform.translation - target_pos).normalize_or_zero();
-                        transform.translation = target_pos + dir * dist;
+                        cam.target_radius = dist;
+                        cam.radius = Some(dist);
+                        cam.force_update = true;
                     }
                 }
             }

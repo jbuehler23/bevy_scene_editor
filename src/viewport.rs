@@ -97,7 +97,7 @@ fn handle_viewport_drop(
     file_items: Query<&FileBrowserItem>,
     parents: Query<&ChildOf>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<crate::EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     snap_settings: Res<crate::snapping::SnapSettings>,
     mut commands: Commands,
@@ -152,13 +152,16 @@ pub(crate) fn cursor_to_ground_plane(
     cam_tf: &GlobalTransform,
     viewport_query: &Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) -> Option<Vec3> {
-    // Convert window cursor to viewport-local coordinates
+    // Convert window cursor to viewport-local coordinates, remapped to camera space
     let viewport_cursor = if let Ok((computed, vp_transform)) = viewport_query.single() {
         let scale = computed.inverse_scale_factor();
         let vp_pos = vp_transform.translation * scale;
         let vp_size = computed.size() * scale;
         let vp_top_left = vp_pos - vp_size / 2.0;
-        cursor_pos - vp_top_left
+        let local = cursor_pos - vp_top_left;
+        // Remap from UI-logical space to camera render-target space
+        let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
+        local * target_size / vp_size
     } else {
         cursor_pos
     };
@@ -253,6 +256,10 @@ pub struct WalkModeState {
     /// Camera transform when walk mode was entered (for cancel).
     saved_transform: Option<Transform>,
     saved_focus: Option<Vec3>,
+    saved_target_focus: Option<Vec3>,
+    saved_target_radius: Option<f32>,
+    saved_target_yaw: Option<f32>,
+    saved_target_pitch: Option<f32>,
 }
 
 fn walk_mode_update(
@@ -274,6 +281,10 @@ fn walk_mode_update(
             for (cam, transform) in &camera_query {
                 walk_mode.saved_transform = Some(*transform);
                 walk_mode.saved_focus = Some(cam.focus);
+                walk_mode.saved_target_focus = Some(cam.target_focus);
+                walk_mode.saved_target_radius = Some(cam.target_radius);
+                walk_mode.saved_target_yaw = Some(cam.target_yaw);
+                walk_mode.saved_target_pitch = Some(cam.target_pitch);
             }
         }
         return;
@@ -285,6 +296,19 @@ fn walk_mode_update(
             for (mut cam, mut transform) in &mut camera_query {
                 *transform = saved_tf;
                 cam.focus = saved_focus;
+                if let Some(tf) = walk_mode.saved_target_focus {
+                    cam.target_focus = tf;
+                }
+                if let Some(r) = walk_mode.saved_target_radius {
+                    cam.target_radius = r;
+                }
+                if let Some(y) = walk_mode.saved_target_yaw {
+                    cam.target_yaw = y;
+                }
+                if let Some(p) = walk_mode.saved_target_pitch {
+                    cam.target_pitch = p;
+                }
+                cam.initialized = false;
             }
         }
         walk_mode.active = false;
@@ -295,7 +319,10 @@ fn walk_mode_update(
     if mouse.just_pressed(MouseButton::Left) || keyboard.just_pressed(KeyCode::Enter) {
         // Update focus to be in front of camera
         for (mut cam, transform) in &mut camera_query {
-            cam.focus = transform.translation + transform.forward().as_vec3() * 5.0;
+            let forward_point = transform.translation + transform.forward().as_vec3() * 5.0;
+            cam.target_focus = forward_point;
+            cam.focus = forward_point;
+            cam.initialized = false;
         }
         walk_mode.active = false;
         return;
@@ -370,6 +397,10 @@ pub struct CameraBookmarks {
 pub struct CameraBookmark {
     pub focus: Vec3,
     pub transform: Transform,
+    pub target_focus: Vec3,
+    pub target_radius: f32,
+    pub target_yaw: f32,
+    pub target_pitch: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +426,16 @@ impl Default for OrbitCenterVisibility {
 // Camera key handling: F = focus, Shift+F = walk, Numpad. = orbit center, bookmarks
 // ---------------------------------------------------------------------------
 
+/// Instantly reposition the camera to orbit around `new_focus` at `new_radius`.
+/// Sets both current and target state so PanOrbitCamera doesn't interpolate back.
+fn focus_camera(cam: &mut PanOrbitCamera, new_focus: Vec3, new_radius: f32) {
+    cam.target_focus = new_focus;
+    cam.focus = new_focus;
+    cam.target_radius = new_radius;
+    cam.radius = Some(new_radius);
+    cam.force_update = true;
+}
+
 fn handle_camera_keys(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -407,7 +448,7 @@ fn handle_camera_keys(
     mut orbit_vis: ResMut<OrbitCenterVisibility>,
     windows: Query<&Window>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    camera_global: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_global: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<crate::EditorEntity>)>,
 ) {
     // Don't handle camera keys during walk mode or modal transform (G/R/S)
     if walk_mode.active || modal.active.is_some() {
@@ -425,10 +466,8 @@ fn handle_camera_keys(
                 let scale = global_tf.compute_transform().scale;
                 let dist = (scale.length() * 3.0).max(5.0);
 
-                for (mut cam, mut transform) in &mut camera_query {
-                    cam.focus = target;
-                    let dir = (transform.translation - target).normalize_or_zero();
-                    transform.translation = target + dir * dist;
+                for (mut cam, _) in &mut camera_query {
+                    focus_camera(&mut cam, target, dist);
                 }
             }
         }
@@ -440,7 +479,9 @@ fn handle_camera_keys(
             if let Ok(global_tf) = selected_transforms.get(primary) {
                 let target = global_tf.translation();
                 for (mut cam, _) in &mut camera_query {
+                    cam.target_focus = target;
                     cam.focus = target;
+                    cam.force_update = true;
                 }
                 orbit_vis.active = true;
                 orbit_vis.timer.reset();
@@ -463,7 +504,9 @@ fn handle_camera_keys(
         // Try ground plane intersection
         if let Some(hit_point) = cursor_to_ground_plane(cursor_pos, camera, cam_tf, &viewport_query) {
             for (mut cam, _) in &mut camera_query {
+                cam.target_focus = hit_point;
                 cam.focus = hit_point;
+                cam.force_update = true;
             }
             orbit_vis.active = true;
             orbit_vis.timer.reset();
@@ -491,6 +534,10 @@ fn handle_camera_keys(
                     bookmarks.slots[index] = Some(CameraBookmark {
                         focus: cam.focus,
                         transform: *transform,
+                        target_focus: cam.target_focus,
+                        target_radius: cam.target_radius,
+                        target_yaw: cam.target_yaw,
+                        target_pitch: cam.target_pitch,
                     });
                 }
             } else {
@@ -498,7 +545,12 @@ fn handle_camera_keys(
                 if let Some(bookmark) = bookmarks.slots[index] {
                     for (mut cam, mut transform) in &mut camera_query {
                         cam.focus = bookmark.focus;
+                        cam.target_focus = bookmark.target_focus;
+                        cam.target_radius = bookmark.target_radius;
+                        cam.target_yaw = bookmark.target_yaw;
+                        cam.target_pitch = bookmark.target_pitch;
                         *transform = bookmark.transform;
+                        cam.initialized = false;
                     }
                 }
             }

@@ -6,6 +6,7 @@ use crate::{
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::SceneViewport,
+    EditorEntity,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,7 @@ fn modal_activate(
     mut modal: ResMut<ModalTransformState>,
     mut gizmo_mode: ResMut<GizmoMode>,
     windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
 ) {
@@ -144,8 +146,11 @@ fn modal_activate(
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
+    let Ok((camera, _)) = camera_query.single() else {
+        return;
+    };
     let viewport_cursor =
-        window_to_viewport_cursor(cursor_pos, &viewport_query).unwrap_or(cursor_pos);
+        window_to_viewport_cursor(cursor_pos, camera, &viewport_query).unwrap_or(cursor_pos);
 
     modal.active = Some(ActiveModal {
         op,
@@ -202,7 +207,7 @@ fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalT
 fn modal_update(
     modal: Res<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     windows: Query<&Window>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
@@ -220,11 +225,11 @@ fn modal_update(
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let viewport_cursor =
-        window_to_viewport_cursor(cursor_pos, &viewport_query).unwrap_or(cursor_pos);
     let Ok((camera, cam_tf)) = camera_query.single() else {
         return;
     };
+    let viewport_cursor =
+        window_to_viewport_cursor(cursor_pos, camera, &viewport_query).unwrap_or(cursor_pos);
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
 
     match active.op {
@@ -460,7 +465,7 @@ fn snap_toggle(
 fn viewport_drag_detect(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     selection: Res<Selection>,
     transforms: Query<(&GlobalTransform, &Transform), With<Selected>>,
@@ -494,7 +499,7 @@ fn viewport_drag_detect(
         return;
     };
 
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, &viewport_query) else {
+    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
         return;
     };
 
@@ -522,7 +527,7 @@ fn viewport_drag_detect(
 fn viewport_drag_update(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
@@ -561,12 +566,12 @@ fn viewport_drag_update(
     let Some(ref active) = drag_state.active else {
         return;
     };
-    let Ok((_camera, cam_tf)) = camera_query.single() else {
+    let Ok((camera, cam_tf)) = camera_query.single() else {
         return;
     };
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
 
-    let viewport_cursor = window_to_viewport_cursor(cursor_pos, &viewport_query)
+    let viewport_cursor = window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
         .unwrap_or(cursor_pos);
 
     let start_pos = active.start_transform.translation;

@@ -24,7 +24,7 @@ use bevy::{
     input_focus::InputDispatchPlugin,
     picking::hover::HoverMap,
     prelude::*,
-    camera::visibility::NoFrustumCulling,
+
 };
 use editor_feathers::EditorFeathersPlugin;
 use editor_widgets::menu_bar::MenuAction;
@@ -79,7 +79,6 @@ impl Plugin for EditorPlugin {
                 layout::update_toolbar_highlights,
                 layout::update_space_toggle_label,
                 auto_hide_internal_entities,
-                auto_disable_frustum_culling,
             ),
         )
         .add_observer(on_scroll)
@@ -121,18 +120,6 @@ fn auto_hide_internal_entities(
     }
 }
 
-/// Disable frustum culling on scene meshes so entities remain visible when moved
-/// below the grid or to extreme positions.
-fn auto_disable_frustum_culling(
-    mut commands: Commands,
-    new_meshes: Query<Entity, (Added<Mesh3d>, Without<NoFrustumCulling>, Without<EditorEntity>)>,
-) {
-    for entity in &new_meshes {
-        if let Ok(mut ec) = commands.get_entity(entity) {
-            ec.insert(NoFrustumCulling);
-        }
-    }
-}
 
 fn spawn_layout(
     mut commands: Commands,
@@ -177,7 +164,6 @@ fn populate_menu(world: &mut World) {
                 vec![
                     ("add.cube", "Cube"),
                     ("add.sphere", "Sphere"),
-                    ("add.brush", "Brush"),
                     ("---", ""),
                     ("add.point_light", "Point Light"),
                     ("add.directional_light", "Directional Light"),
@@ -255,7 +241,7 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
             commands.queue(|world: &mut World| {
                 entity_ops::create_entity_in_world(
                     world,
-                    entity_ops::EntityTemplate::Mesh3dCube,
+                    entity_ops::EntityTemplate::Cube,
                 );
             });
         }
@@ -263,7 +249,7 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
             commands.queue(|world: &mut World| {
                 entity_ops::create_entity_in_world(
                     world,
-                    entity_ops::EntityTemplate::Mesh3dSphere,
+                    entity_ops::EntityTemplate::Sphere,
                 );
             });
         }
@@ -296,14 +282,6 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                 entity_ops::create_entity_in_world(
                     world,
                     entity_ops::EntityTemplate::Camera3d,
-                );
-            });
-        }
-        "add.brush" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(
-                    world,
-                    entity_ops::EntityTemplate::BrushCuboid,
                 );
             });
         }

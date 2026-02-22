@@ -146,9 +146,8 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
             // Separator
             separator::separator(separator::SeparatorProps::vertical()),
             // Entity creation
-            toolbar_create_button(Icon::Box, "Cube", EntityTemplate::Mesh3dCube, f.clone()),
-            toolbar_create_button(Icon::Circle, "Sphere", EntityTemplate::Mesh3dSphere, f.clone()),
-            toolbar_create_button(Icon::Cuboid, "Brush", EntityTemplate::BrushCuboid, f.clone()),
+            toolbar_create_button(Icon::Box, "Cube", EntityTemplate::Cube, f.clone()),
+            toolbar_create_button(Icon::Circle, "Sphere", EntityTemplate::Sphere, f.clone()),
             toolbar_create_button(Icon::Lightbulb, "Light", EntityTemplate::PointLight, f.clone()),
             toolbar_create_button(Icon::Plus, "Empty", EntityTemplate::Empty, f.clone()),
             // Spacer pushes help button to the right
@@ -278,10 +277,8 @@ fn toolbar_create_button(icon: Icon, label: &str, template: EntityTemplate, font
         observe(
             move |_: On<Pointer<Click>>,
                   mut commands: Commands,
-                  mut meshes: ResMut<Assets<Mesh>>,
-                  mut materials: ResMut<Assets<StandardMaterial>>,
                   mut selection: ResMut<crate::selection::Selection>| {
-                create_entity(&mut commands, template, &mut meshes, &mut materials, &mut selection);
+                create_entity(&mut commands, template, &mut selection);
             },
         ),
     )

@@ -823,7 +823,7 @@ fn on_context_menu_action(
         "hierarchy.add_cube" => {
             if let Some(parent) = target_entity {
                 commands.queue(move |world: &mut World| {
-                    entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Mesh3dCube);
+                    entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Cube);
                     // Reparent the newly created entity under the target
                     let selection = world.resource::<Selection>();
                     if let Some(new_entity) = selection.primary() {
@@ -835,7 +835,7 @@ fn on_context_menu_action(
         "hierarchy.add_sphere" => {
             if let Some(parent) = target_entity {
                 commands.queue(move |world: &mut World| {
-                    entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Mesh3dSphere);
+                    entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Sphere);
                     let selection = world.resource::<Selection>();
                     if let Some(new_entity) = selection.primary() {
                         world.entity_mut(new_entity).insert(ChildOf(parent));

@@ -1,5 +1,10 @@
-use bevy::{camera::primitives::Aabb, prelude::*};
+use std::f32::consts::FRAC_PI_2;
 
+use avian3d::parry::math::Point as ParryPoint;
+use avian3d::parry::transformation::convex_hull;
+use bevy::prelude::*;
+
+use crate::brush::{self, BrushMeshCache};
 use crate::selection::Selected;
 
 pub struct ViewportOverlaysPlugin;
@@ -7,7 +12,22 @@ pub struct ViewportOverlaysPlugin;
 impl Plugin for ViewportOverlaysPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OverlaySettings>()
-            .add_systems(Update, (draw_selection_bounding_boxes, draw_coordinate_indicator));
+            .add_systems(
+                PostUpdate,
+                draw_selection_bounding_boxes
+                    .after(bevy::camera::visibility::VisibilitySystems::CalculateBounds)
+                    .after(bevy::transform::TransformSystems::Propagate),
+            )
+            .add_systems(
+                PostUpdate,
+                (
+                    draw_point_light_gizmo,
+                    draw_spot_light_gizmo,
+                    draw_dir_light_gizmo,
+                    draw_camera_gizmo,
+                ),
+            )
+            .add_systems(Update, draw_coordinate_indicator);
     }
 }
 
@@ -26,96 +46,248 @@ impl Default for OverlaySettings {
     }
 }
 
-/// Draw wireframe bounding boxes around selected entities.
+/// Draw convex hull wireframes around selected entities with geometry.
 fn draw_selection_bounding_boxes(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    selected: Query<(Entity, &GlobalTransform, Option<&Aabb>), With<Selected>>,
+    selected: Query<(Entity, &GlobalTransform, Option<&BrushMeshCache>), With<Selected>>,
     children_query: Query<&Children>,
-    aabb_query: Query<&Aabb>,
+    mesh_query: Query<(&Mesh3d, &GlobalTransform)>,
+    meshes: Res<Assets<Mesh>>,
 ) {
     if !settings.show_bounding_boxes {
         return;
     }
 
-    for (entity, global_tf, maybe_aabb) in &selected {
-        let computed: Transform = global_tf.compute_transform();
-        let pos = computed.translation;
-        let rotation = computed.rotation;
-        let scale = computed.scale;
+    let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
 
-        // Try to find an Aabb: on the entity itself, or on a descendant (for GLTF models)
-        let child_aabb = find_child_aabb(entity, &children_query, &aabb_query);
-        let resolved_aabb: Option<&Aabb> = maybe_aabb.or(child_aabb);
+    for (entity, global_tf, maybe_brush_cache) in &selected {
+        // 1. Brush: use BrushMeshCache vertices + face polygons directly
+        if let Some(cache) = maybe_brush_cache {
+            if cache.vertices.is_empty() {
+                continue;
+            }
+            let world_verts: Vec<Vec3> = cache
+                .vertices
+                .iter()
+                .map(|v| global_tf.transform_point(*v))
+                .collect();
+            draw_hull_wireframe(&mut gizmos, &world_verts, &cache.face_polygons, color);
+            continue;
+        }
 
-        let (center, half) = if let Some(aabb) = resolved_aabb {
-            let he = Vec3::from(aabb.half_extents) * scale;
-            let c = pos + rotation * (Vec3::from(aabb.center) * scale);
-            (c, he)
-        } else {
-            // Fallback for entities without meshes (lights, empties)
-            (pos, Vec3::splat(0.25))
-        };
+        // 2. Mesh entities: collect world-space vertices, compute convex hull
+        let mut world_verts = Vec::new();
+        collect_descendant_mesh_world_vertices(
+            entity,
+            &children_query,
+            &mesh_query,
+            &meshes,
+            &mut world_verts,
+        );
+        if world_verts.is_empty() {
+            // No geometry — type-specific gizmo systems handle the rest
+            continue;
+        }
 
-        draw_wireframe_box(&mut gizmos, center, half, rotation, Color::srgba(1.0, 1.0, 0.0, 0.5));
+        let parry_points: Vec<ParryPoint<f32>> = world_verts
+            .iter()
+            .map(|v| ParryPoint::new(v.x, v.y, v.z))
+            .collect();
+        let (hull_verts, hull_tris) = convex_hull(&parry_points);
+        if hull_verts.is_empty() || hull_tris.is_empty() {
+            continue;
+        }
+
+        let hull_positions: Vec<Vec3> = hull_verts
+            .iter()
+            .map(|p| Vec3::new(p.x, p.y, p.z))
+            .collect();
+        let hull_faces = brush::merge_hull_triangles(&hull_positions, &hull_tris);
+        let face_polygons: Vec<Vec<usize>> = hull_faces
+            .into_iter()
+            .map(|f| f.vertex_indices)
+            .collect();
+        draw_hull_wireframe(&mut gizmos, &hull_positions, &face_polygons, color);
     }
 }
 
-/// Walk children recursively to find the first entity with an `Aabb` component.
-fn find_child_aabb<'a>(
+/// Draw unique edges from face polygons as wireframe lines.
+fn draw_hull_wireframe(
+    gizmos: &mut Gizmos,
+    world_verts: &[Vec3],
+    face_polygons: &[Vec<usize>],
+    color: Color,
+) {
+    let mut drawn: Vec<(usize, usize)> = Vec::new();
+    for polygon in face_polygons {
+        if polygon.len() < 2 {
+            continue;
+        }
+        for i in 0..polygon.len() {
+            let a = polygon[i];
+            let b = polygon[(i + 1) % polygon.len()];
+            let edge = (a.min(b), a.max(b));
+            if !drawn.contains(&edge) {
+                drawn.push(edge);
+                gizmos.line(world_verts[edge.0], world_verts[edge.1], color);
+            }
+        }
+    }
+}
+
+/// Recursively collect world-space vertex positions from Mesh3d components.
+fn collect_descendant_mesh_world_vertices(
     entity: Entity,
     children_query: &Query<&Children>,
-    aabb_query: &'a Query<&Aabb>,
-) -> Option<&'a Aabb> {
-    let Ok(children) = children_query.get(entity) else {
-        return None;
-    };
-    for child in children.iter() {
-        if let Ok(aabb) = aabb_query.get(child) {
-            return Some(aabb);
-        }
-        if let Some(aabb) = find_child_aabb(child, children_query, aabb_query) {
-            return Some(aabb);
+    mesh_query: &Query<(&Mesh3d, &GlobalTransform)>,
+    meshes: &Assets<Mesh>,
+    out: &mut Vec<Vec3>,
+) {
+    if let Ok((mesh3d, global_tf)) = mesh_query.get(entity) {
+        if let Some(mesh) = meshes.get(&mesh3d.0) {
+            if let Some(positions) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                .and_then(|attr| attr.as_float3())
+            {
+                for pos in positions {
+                    out.push(global_tf.transform_point(Vec3::from_array(*pos)));
+                }
+            }
         }
     }
-    None
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            collect_descendant_mesh_world_vertices(child, children_query, mesh_query, meshes, out);
+        }
+    }
 }
 
-/// Draw a wireframe box centered at `center` with given half extents and rotation.
-fn draw_wireframe_box(gizmos: &mut Gizmos, center: Vec3, half: Vec3, rotation: Quat, color: Color) {
-    let corners = [
-        center + rotation * Vec3::new(-half.x, -half.y, -half.z),
-        center + rotation * Vec3::new(half.x, -half.y, -half.z),
-        center + rotation * Vec3::new(half.x, half.y, -half.z),
-        center + rotation * Vec3::new(-half.x, half.y, -half.z),
-        center + rotation * Vec3::new(-half.x, -half.y, half.z),
-        center + rotation * Vec3::new(half.x, -half.y, half.z),
-        center + rotation * Vec3::new(half.x, half.y, half.z),
-        center + rotation * Vec3::new(-half.x, half.y, half.z),
-    ];
+// ---------------------------------------------------------------------------
+// Type-specific gizmo systems
+// ---------------------------------------------------------------------------
 
-    // Bottom face
-    gizmos.line(corners[0], corners[1], color);
-    gizmos.line(corners[1], corners[2], color);
-    gizmos.line(corners[2], corners[3], color);
-    gizmos.line(corners[3], corners[0], color);
-    // Top face
-    gizmos.line(corners[4], corners[5], color);
-    gizmos.line(corners[5], corners[6], color);
-    gizmos.line(corners[6], corners[7], color);
-    gizmos.line(corners[7], corners[4], color);
-    // Verticals
-    gizmos.line(corners[0], corners[4], color);
-    gizmos.line(corners[1], corners[5], color);
-    gizmos.line(corners[2], corners[6], color);
-    gizmos.line(corners[3], corners[7], color);
+/// Point light: 3 axis-aligned circles at range radius.
+fn draw_point_light_gizmo(
+    mut gizmos: Gizmos,
+    settings: Res<OverlaySettings>,
+    query: Query<(&PointLight, &GlobalTransform), With<Selected>>,
+) {
+    if !settings.show_bounding_boxes {
+        return;
+    }
+    let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
+    for (light, tf) in &query {
+        let pos = tf.translation();
+        gizmos.circle(
+            Isometry3d::new(pos, Quat::from_rotation_x(FRAC_PI_2)),
+            light.range,
+            color,
+        );
+        gizmos.circle(Isometry3d::new(pos, Quat::IDENTITY), light.range, color);
+        gizmos.circle(
+            Isometry3d::new(pos, Quat::from_rotation_y(FRAC_PI_2)),
+            light.range,
+            color,
+        );
+    }
 }
+
+/// Spot light: cone from outer_angle + range.
+fn draw_spot_light_gizmo(
+    mut gizmos: Gizmos,
+    settings: Res<OverlaySettings>,
+    query: Query<(&SpotLight, &GlobalTransform), With<Selected>>,
+) {
+    if !settings.show_bounding_boxes {
+        return;
+    }
+    let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
+    for (light, tf) in &query {
+        let pos = tf.translation();
+        let fwd = tf.forward().as_vec3();
+        let right = tf.right().as_vec3();
+        let up = tf.up().as_vec3();
+        let r = light.range * light.outer_angle.tan();
+        let tip = pos + fwd * light.range;
+        // Circle at cone end
+        gizmos.circle(
+            Isometry3d::new(tip, tf.compute_transform().rotation),
+            r,
+            color,
+        );
+        // 4 lines from origin to circle edges
+        gizmos.line(pos, tip + right * r, color);
+        gizmos.line(pos, tip - right * r, color);
+        gizmos.line(pos, tip + up * r, color);
+        gizmos.line(pos, tip - up * r, color);
+    }
+}
+
+/// Directional light: arrow along forward direction.
+fn draw_dir_light_gizmo(
+    mut gizmos: Gizmos,
+    settings: Res<OverlaySettings>,
+    query: Query<&GlobalTransform, (With<DirectionalLight>, With<Selected>)>,
+) {
+    if !settings.show_bounding_boxes {
+        return;
+    }
+    let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
+    for tf in &query {
+        let pos = tf.translation();
+        let dir = tf.forward().as_vec3();
+        gizmos.arrow(pos, pos + dir * 2.0, color);
+    }
+}
+
+/// Camera: frustum wireframe from Projection.
+fn draw_camera_gizmo(
+    mut gizmos: Gizmos,
+    settings: Res<OverlaySettings>,
+    query: Query<(&Projection, &GlobalTransform), With<Selected>>,
+) {
+    if !settings.show_bounding_boxes {
+        return;
+    }
+    let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
+    for (projection, tf) in &query {
+        let Projection::Perspective(proj) = projection else {
+            continue;
+        };
+        let depth = 2.0;
+        let half_v = depth * (proj.fov / 2.0).tan();
+        let half_h = half_v * proj.aspect_ratio;
+        let fwd = tf.forward().as_vec3();
+        let right = tf.right().as_vec3();
+        let up = tf.up().as_vec3();
+        let origin = tf.translation();
+        let far_center = origin + fwd * depth;
+        let corners = [
+            far_center + right * half_h + up * half_v,
+            far_center - right * half_h + up * half_v,
+            far_center - right * half_h - up * half_v,
+            far_center + right * half_h - up * half_v,
+        ];
+        // 4 lines from origin to far corners
+        for &c in &corners {
+            gizmos.line(origin, c, color);
+        }
+        // Far rectangle
+        for i in 0..4 {
+            gizmos.line(corners[i], corners[(i + 1) % 4], color);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Coordinate indicator
+// ---------------------------------------------------------------------------
 
 /// Draw a small coordinate indicator showing camera orientation.
 fn draw_coordinate_indicator(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    camera_query: Query<&GlobalTransform, With<Camera3d>>,
+    camera_query: Query<&GlobalTransform, (With<Camera3d>, With<crate::EditorEntity>)>,
 ) {
     if !settings.show_coordinate_indicator {
         return;

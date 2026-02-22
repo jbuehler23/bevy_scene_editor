@@ -45,9 +45,8 @@ impl Plugin for EntityOpsPlugin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityTemplate {
     Empty,
-    Mesh3dCube,
-    Mesh3dSphere,
-    BrushCuboid,
+    Cube,
+    Sphere,
     PointLight,
     DirectionalLight,
     SpotLight,
@@ -58,9 +57,8 @@ impl EntityTemplate {
     pub fn label(self) -> &'static str {
         match self {
             Self::Empty => "Empty Entity",
-            Self::Mesh3dCube => "Cube",
-            Self::Mesh3dSphere => "Sphere",
-            Self::BrushCuboid => "Brush",
+            Self::Cube => "Cube",
+            Self::Sphere => "Sphere",
             Self::PointLight => "Point Light",
             Self::DirectionalLight => "Directional Light",
             Self::SpotLight => "Spot Light",
@@ -76,48 +74,24 @@ impl EntityTemplate {
 pub fn create_entity(
     commands: &mut Commands,
     template: EntityTemplate,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
     selection: &mut Selection,
 ) -> Entity {
     let entity = match template {
         EntityTemplate::Empty => commands
             .spawn((Name::new("Empty"), Transform::default()))
             .id(),
-        EntityTemplate::Mesh3dCube => {
-            let mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-            let material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.7, 0.7, 0.7),
-                ..default()
-            });
-            commands
-                .spawn((
-                    Name::new("Cube"),
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    Transform::default(),
-                ))
-                .id()
-        }
-        EntityTemplate::Mesh3dSphere => {
-            let mesh = meshes.add(Sphere::new(0.5));
-            let material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.7, 0.7, 0.7),
-                ..default()
-            });
-            commands
-                .spawn((
-                    Name::new("Sphere"),
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    Transform::default(),
-                ))
-                .id()
-        }
-        EntityTemplate::BrushCuboid => commands
+        EntityTemplate::Cube => commands
             .spawn((
-                Name::new("Brush"),
+                Name::new("Cube"),
                 crate::brush::Brush::cuboid(0.5, 0.5, 0.5),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id(),
+        EntityTemplate::Sphere => commands
+            .spawn((
+                Name::new("Sphere"),
+                crate::brush::Brush::sphere(0.5),
                 Transform::default(),
                 Visibility::default(),
             ))
@@ -169,12 +143,10 @@ pub fn create_entity(
 pub fn create_entity_in_world(world: &mut World, template: EntityTemplate) {
     let mut system_state: SystemState<(
         Commands,
-        ResMut<Assets<Mesh>>,
-        ResMut<Assets<StandardMaterial>>,
         ResMut<Selection>,
     )> = SystemState::new(world);
-    let (mut commands, mut meshes, mut materials, mut selection) = system_state.get_mut(world);
-    create_entity(&mut commands, template, &mut meshes, &mut materials, &mut selection);
+    let (mut commands, mut selection) = system_state.get_mut(world);
+    create_entity(&mut commands, template, &mut selection);
     system_state.apply(world);
 }
 

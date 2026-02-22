@@ -6,6 +6,7 @@ use crate::{
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::SceneViewport,
+    EditorEntity,
 };
 
 // ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ fn handle_gizmo_mode_keys(
 fn handle_gizmo_hover(
     selection: Res<Selection>,
     transforms: Query<&GlobalTransform, With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     windows: Query<&Window>,
     mode: Res<GizmoMode>,
     space: Res<GizmoSpace>,
@@ -175,7 +176,7 @@ fn handle_gizmo_hover(
     };
 
     // Convert window cursor to viewport-local coordinates
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, &viewport_query) else {
+    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
         return;
     };
 
@@ -222,7 +223,7 @@ fn handle_gizmo_hover(
 fn handle_gizmo_drag(
     selection: Res<Selection>,
     mut transforms: Query<(&GlobalTransform, &mut Transform), With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     windows: Query<&Window>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -258,11 +259,10 @@ fn handle_gizmo_drag(
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, &viewport_query) else {
+    let Ok((camera, cam_tf)) = camera_query.single() else {
         return;
     };
-
-    let Ok((camera, cam_tf)) = camera_query.single() else {
+    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
         return;
     };
 
@@ -542,9 +542,16 @@ fn axis_color(axis: GizmoAxis, active: Option<GizmoAxis>) -> Color {
     }
 }
 
-/// Convert window cursor position to viewport-local coordinates.
+/// Convert window cursor position to viewport-local coordinates in camera space.
+///
+/// The camera renders to an off-screen image whose logical size may differ from
+/// the UI node's logical size (they diverge on HiDPI/fractional-scaling displays).
+/// This function remaps from UI-logical space into the camera's viewport space so
+/// that `camera.viewport_to_world()` and `camera.world_to_viewport()` produce
+/// correct results.
 pub(crate) fn window_to_viewport_cursor(
     cursor_pos: Vec2,
+    camera: &Camera,
     viewport_query: &Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) -> Option<Vec2> {
     let Ok((computed, vp_transform)) = viewport_query.single() else {
@@ -558,7 +565,9 @@ pub(crate) fn window_to_viewport_cursor(
     let vp_top_left = vp_pos - vp_size / 2.0;
     let local = cursor_pos - vp_top_left;
     if local.x >= 0.0 && local.y >= 0.0 && local.x <= vp_size.x && local.y <= vp_size.y {
-        Some(local)
+        // Remap from UI-logical space to camera render-target space
+        let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
+        Some(local * target_size / vp_size)
     } else {
         None
     }
