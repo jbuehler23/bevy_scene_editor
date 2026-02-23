@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{input_focus::InputFocus, prelude::*};
 use bevy_infinite_grid::{InfiniteGrid, InfiniteGridSettings};
 
 pub struct SnappingPlugin;
@@ -7,7 +7,7 @@ impl Plugin for SnappingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SnapSettings>()
             .init_resource::<GridSettings>()
-            .add_systems(Update, sync_grid_settings);
+            .add_systems(Update, (handle_grid_size_keys, sync_grid_settings).chain());
     }
 }
 
@@ -28,7 +28,7 @@ impl Default for GridSettings {
     fn default() -> Self {
         Self {
             visible: true,
-            scale: 1.0,
+            scale: 4.0,
             major_line_color: Color::srgb(0.25, 0.25, 0.25),
             minor_line_color: Color::srgb(0.1, 0.1, 0.1),
             fadeout_distance: 100.0,
@@ -37,9 +37,15 @@ impl Default for GridSettings {
 }
 
 fn sync_grid_settings(
-    grid: Res<GridSettings>,
+    snap: Res<SnapSettings>,
+    mut grid: ResMut<GridSettings>,
     mut grids: Query<(&mut InfiniteGridSettings, &mut Visibility), With<InfiniteGrid>>,
 ) {
+    // Sync grid scale from snap settings whenever snap changes.
+    // InfiniteGrid scale is lines-per-unit (density), so use the reciprocal of cell size.
+    if snap.is_changed() {
+        grid.scale = 1.0 / snap.grid_size();
+    }
     if !grid.is_changed() {
         return;
     }
@@ -60,6 +66,9 @@ fn sync_grid_settings(
 // Snap settings
 // ---------------------------------------------------------------------------
 
+pub const GRID_POWER_MIN: i32 = -3;
+pub const GRID_POWER_MAX: i32 = 8;
+
 #[derive(Resource)]
 pub struct SnapSettings {
     pub translate_snap: bool,
@@ -68,22 +77,31 @@ pub struct SnapSettings {
     pub rotate_increment: f32,
     pub scale_snap: bool,
     pub scale_increment: f32,
+    /// Exponential grid power. Actual grid size = 2^grid_power.
+    pub grid_power: i32,
 }
 
 impl Default for SnapSettings {
     fn default() -> Self {
+        let grid_power = -2;
         Self {
             translate_snap: false,
-            translate_increment: 0.25,
+            translate_increment: 2.0_f32.powi(grid_power),
             rotate_snap: false,
             rotate_increment: 15.0_f32.to_radians(),
             scale_snap: false,
             scale_increment: 0.1,
+            grid_power,
         }
     }
 }
 
 impl SnapSettings {
+    /// Actual grid size derived from grid_power: 2^grid_power.
+    pub fn grid_size(&self) -> f32 {
+        2.0_f32.powi(self.grid_power)
+    }
+
     /// Snap a translation value to the nearest increment.
     pub fn snap_translate(&self, value: f32) -> f32 {
         if self.translate_snap && self.translate_increment > 0.0 {
@@ -177,5 +195,34 @@ impl SnapSettings {
         } else {
             v
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Grid size keyboard controls
+// ---------------------------------------------------------------------------
+
+fn handle_grid_size_keys(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    input_focus: Res<InputFocus>,
+    modal: Res<crate::modal_transform::ModalTransformState>,
+    walk_mode: Res<crate::viewport::WalkModeState>,
+    mut snap: ResMut<SnapSettings>,
+) {
+    if input_focus.0.is_some() || modal.active.is_some() || walk_mode.active {
+        return;
+    }
+
+    let mut changed = false;
+    if keyboard.just_pressed(KeyCode::BracketLeft) {
+        snap.grid_power = (snap.grid_power - 1).max(GRID_POWER_MIN);
+        changed = true;
+    }
+    if keyboard.just_pressed(KeyCode::BracketRight) {
+        snap.grid_power = (snap.grid_power + 1).min(GRID_POWER_MAX);
+        changed = true;
+    }
+    if changed {
+        snap.translate_increment = snap.grid_size();
     }
 }
