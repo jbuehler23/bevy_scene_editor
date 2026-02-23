@@ -3,7 +3,7 @@ use editor_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRight
 
 use crate::{
     brush::{BrushEditMode, ClipState, EditMode, VertexDragState, VertexDragConstraint},
-    draw_brush::{DrawBrushState, DrawPhase},
+    draw_brush::{DrawBrushState, DrawMode, DrawPhase},
     gizmos::{GizmoMode, GizmoSpace},
     modal_transform::{ModalConstraint, ModalOp, ModalTransformState},
     scene_io::SceneFilePath,
@@ -123,16 +123,20 @@ fn update_status_right(
 
     // Show draw brush mode status
     if let Some(ref active) = draw_state.active {
+        let mode_label = match active.mode {
+            DrawMode::Add => "ADD",
+            DrawMode::Cut => "CUT",
+        };
         text.0 = match active.phase {
             DrawPhase::PlacingFirstCorner => {
-                "DRAW BRUSH: Click to place first corner (Ctrl lock plane) | Esc cancel".to_string()
+                format!("DRAW BRUSH ({mode_label}): Click to place first corner (Ctrl lock plane, Tab toggle mode) | Esc cancel")
             }
             DrawPhase::DrawingFootprint => {
-                "DRAW BRUSH: Move to size, click to lock footprint | Esc cancel".to_string()
+                format!("DRAW BRUSH ({mode_label}): Move to size, click to lock footprint | Esc cancel")
             }
             DrawPhase::ExtrudingDepth => {
                 format!(
-                    "DRAW BRUSH: Move for depth ({:.2}), click to create | Esc cancel",
+                    "DRAW BRUSH ({mode_label}): Move for depth ({:.2}), click to create | Esc cancel",
                     active.depth
                 )
             }
