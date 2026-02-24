@@ -327,7 +327,16 @@ fn toolbar_help_button(icon_font: Handle<Font>) -> impl Bundle {
                             .with_z_index(200),
                     ))
                     .with_children(|parent| {
-                        spawn_keybind_help_content(parent);
+                        parent
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                max_height: px(500.0),
+                                overflow: Overflow::scroll_y(),
+                                ..Default::default()
+                            })
+                            .with_children(|scroll_parent| {
+                                spawn_keybind_help_content(scroll_parent);
+                            });
                     })
                     .id();
 
@@ -345,10 +354,23 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
                 ("MMB", "Orbit"),
                 ("Shift+MMB", "Pan"),
                 ("Scroll", "Zoom"),
-                ("Shift+F", "Walk mode"),
                 ("F", "Focus selected"),
+                ("Shift+F", "Walk mode"),
                 ("Numpad .", "Orbit to selection"),
                 ("Shift+MMB click", "Set orbit center"),
+                ("Ctrl+1-9", "Save camera bookmark"),
+                ("1-9", "Restore bookmark"),
+            ],
+        ),
+        (
+            "Walk Mode",
+            &[
+                ("W/A/S/D", "Move"),
+                ("Q/E", "Down / Up"),
+                ("Shift", "Double speed"),
+                ("Scroll", "Adjust speed"),
+                ("Click / Enter", "Confirm"),
+                ("Esc / Right-click", "Cancel"),
             ],
         ),
         (
@@ -357,11 +379,28 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
                 ("W", "Translate mode"),
                 ("E", "Rotate mode"),
                 ("R", "Scale mode"),
-                ("X", "Toggle space"),
+                ("X", "Toggle local/world"),
+                (".", "Toggle snap"),
                 ("G", "Grab (modal)"),
                 ("S", "Scale (modal)"),
                 ("R", "Rotate (modal)"),
                 ("X/Y/Z", "Axis constraint"),
+                ("Shift+X/Y/Z", "Plane constraint"),
+                ("Click / Enter", "Confirm"),
+                ("Esc / Right-click", "Cancel"),
+                ("Ctrl", "Toggle snap"),
+            ],
+        ),
+        (
+            "Entity",
+            &[
+                ("Delete / Backspace", "Delete"),
+                ("Ctrl+D", "Duplicate"),
+                ("Ctrl+C / Ctrl+V", "Copy / Paste components"),
+                ("H", "Toggle visibility"),
+                ("Alt+G", "Reset position"),
+                ("Alt+R", "Reset rotation"),
+                ("Alt+S", "Reset scale"),
             ],
         ),
         (
@@ -371,19 +410,38 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
                 ("1", "Vertex mode"),
                 ("2", "Edge mode"),
                 ("3", "Face mode"),
-                ("G", "Grab"),
+                ("4", "Clip mode"),
+                ("G / E", "Grab / Extrude"),
                 ("X/Y/Z", "Constrain axis"),
+                ("Delete", "Delete selected"),
+                ("Enter", "Apply clip"),
+                ("Esc", "Cancel / Clear"),
             ],
         ),
         (
-            "General",
+            "Brush Draw",
             &[
+                ("B", "Activate draw mode"),
+                ("Tab", "Toggle Add/Cut"),
+                ("Click", "Advance phase"),
+                ("Esc / Right-click", "Cancel"),
+            ],
+        ),
+        (
+            "View",
+            &[
+                ("Ctrl+Shift+W", "Toggle wireframe"),
+                ("[  /  ]", "Grid size down/up"),
+            ],
+        ),
+        (
+            "File",
+            &[
+                ("Ctrl+S", "Save scene"),
+                ("Ctrl+O", "Open scene"),
+                ("Ctrl+Shift+N", "New scene"),
                 ("Ctrl+Z", "Undo"),
                 ("Ctrl+Shift+Z", "Redo"),
-                ("Delete", "Delete"),
-                ("Ctrl+D", "Duplicate"),
-                ("Ctrl+S", "Save"),
-                ("Ctrl+O", "Open"),
             ],
         ),
     ];
@@ -409,7 +467,7 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::SpaceBetween,
                     column_gap: px(tokens::SPACING_LG),
-                    width: px(220.0),
+                    width: px(260.0),
                     ..Default::default()
                 },
                 children![
