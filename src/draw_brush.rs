@@ -5,12 +5,13 @@ use bevy::{
     ui::UiGlobalTransform,
 };
 
+use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
+use bevy_jsn_geometry::{
+    brush_planes_to_world, brushes_intersect, clean_degenerate_faces, compute_brush_geometry,
+    compute_face_tangent_axes, subtract_brush,
+};
 use crate::{
-    brush::{
-        Brush, BrushFaceData, BrushFaceEntity, BrushPlane, brush_planes_to_world,
-        brushes_intersect, clean_degenerate_faces, compute_brush_geometry,
-        compute_face_tangent_axes, subtract_brush,
-    },
+    brush::BrushFaceEntity,
     commands::{CommandHistory, EditorCommand, snapshot_entity, snapshot_rebuild},
     selection::{Selected, Selection},
     snapping::SnapSettings,
@@ -481,7 +482,8 @@ fn draw_brush_preview(
             if active.mode == DrawMode::Cut {
                 let cutter_planes = build_cutter_planes(active);
                 for (brush, brush_tf) in &brushes {
-                    let world_target = brush_planes_to_world(brush, brush_tf);
+                    let (_, rotation, translation) = brush_tf.to_scale_rotation_translation();
+                    let world_target = brush_planes_to_world(&brush.faces, rotation, translation);
                     let mut combined = world_target;
                     combined.extend_from_slice(&cutter_planes);
                     let (verts, polys) = compute_brush_geometry(&combined);
@@ -802,7 +804,8 @@ fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
 
         for (entity, brush, global_transform) in &targets {
             // Transform target planes to world space
-            let world_target = brush_planes_to_world(brush, global_transform);
+            let (_, rotation, translation) = global_transform.to_scale_rotation_translation();
+            let world_target = brush_planes_to_world(&brush.faces, rotation, translation);
 
             // Check intersection
             if !brushes_intersect(&world_target, &cutter_planes) {

@@ -13,11 +13,12 @@ use crate::{
     EditorEntity,
 };
 
+use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
+use bevy_jsn_geometry::{compute_face_tangent_axes, point_inside_all_planes, EPSILON};
 use super::{
-    Brush, BrushEditMode, BrushFaceData, BrushMeshCache, BrushPlane, BrushSelection, EditMode,
-    SetBrush, EPSILON,
+    BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
+    SetBrush,
 };
-use super::geometry::{compute_face_tangent_axes, point_inside_all_planes};
 use super::hull::rebuild_brush_from_vertices;
 
 // ---------------------------------------------------------------------------

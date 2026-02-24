@@ -4,8 +4,8 @@ use avian3d::parry::math::Point as ParryPoint;
 use avian3d::parry::transformation::convex_hull;
 use bevy::prelude::*;
 
-use super::{Brush, BrushFaceData, BrushPlane, EPSILON};
-use super::geometry::sort_face_vertices_by_winding;
+use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
+use bevy_jsn_geometry::{sort_face_vertices_by_winding, EPSILON};
 
 fn vec3_to_point(v: Vec3) -> ParryPoint<f32> {
     ParryPoint::new(v.x, v.y, v.z)

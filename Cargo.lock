@@ -1048,6 +1048,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_jsn"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_jsn_geometry",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "bevy_jsn_geometry"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "bevy_light"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1420,6 +1438,8 @@ dependencies = [
  "avian3d",
  "bevy",
  "bevy_infinite_grid",
+ "bevy_jsn",
+ "bevy_jsn_geometry",
  "bevy_notify",
  "bevy_panorbit_camera",
  "editor_feathers",

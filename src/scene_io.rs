@@ -4,6 +4,7 @@ use bevy::{
     scene::serde::{SceneDeserializer, SceneSerializer},
     tasks::IoTaskPool,
 };
+use bevy_jsn::format::{JsnAssets, JsnHeader, JsnMetadata, JsnScene};
 use serde::de::DeserializeSeed;
 
 use crate::EditorEntity;
@@ -17,10 +18,11 @@ impl Plugin for SceneIoPlugin {
     }
 }
 
-/// Stores the currently active scene file path.
+/// Stores the currently active scene file path and metadata.
 #[derive(Resource, Default)]
 pub struct SceneFilePath {
     pub path: Option<String>,
+    pub metadata: JsnMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -33,11 +35,43 @@ pub fn save_scene(world: &mut World) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
 
+    // Serialize the DynamicScene to a JSON value
     let serializer = SceneSerializer::new(&scene, &registry);
-    let json = match serde_json::to_string_pretty(&serializer) {
-        Ok(json) => json,
+    let scene_value = match serde_json::to_value(&serializer) {
+        Ok(v) => v,
         Err(err) => {
             warn!("Failed to serialize scene: {err}");
+            return;
+        }
+    };
+
+    // Build asset manifest by scanning brush textures and GLTF sources
+    let assets = build_asset_manifest(world);
+
+    // Build metadata
+    let now = chrono_now();
+    let scene_path_res = world.resource::<SceneFilePath>();
+    let mut metadata = scene_path_res.metadata.clone();
+    metadata.modified = now.clone();
+    if metadata.created.is_empty() {
+        metadata.created = now;
+    }
+    if metadata.name.is_empty() {
+        metadata.name = "Untitled".to_string();
+    }
+
+    let jsn = JsnScene {
+        jsn: JsnHeader::default(),
+        metadata: metadata.clone(),
+        assets,
+        editor: None,
+        scene: scene_value,
+    };
+
+    let json = match serde_json::to_string_pretty(&jsn) {
+        Ok(json) => json,
+        Err(err) => {
+            warn!("Failed to serialize JSN: {err}");
             return;
         }
     };
@@ -47,11 +81,13 @@ pub fn save_scene(world: &mut World) {
         scene_path
             .path
             .clone()
-            .unwrap_or_else(|| "scene.scene.json".to_string())
+            .unwrap_or_else(|| "scene.jsn".to_string())
     };
 
-    // Save the path back
-    world.resource_mut::<SceneFilePath>().path = Some(path.clone());
+    // Save path and metadata back
+    let mut scene_path = world.resource_mut::<SceneFilePath>();
+    scene_path.path = Some(path.clone());
+    scene_path.metadata = metadata;
 
     // Write to disk on the IO task pool
     let path_clone = path.clone();
@@ -75,7 +111,7 @@ pub fn load_scene(world: &mut World) {
         scene_path
             .path
             .clone()
-            .unwrap_or_else(|| "scene.scene.json".to_string())
+            .unwrap_or_else(|| "scene.jsn".to_string())
     };
 
     let json = match std::fs::read_to_string(&path) {
@@ -89,26 +125,56 @@ pub fn load_scene(world: &mut World) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
 
-    let scene_deserializer = SceneDeserializer {
-        type_registry: &registry,
-    };
+    // Detect format: try JSN first, fall back to raw DynamicScene JSON
+    if path.ends_with(".scene.json") {
+        // Legacy format: raw DynamicScene JSON
+        let scene_deserializer = SceneDeserializer {
+            type_registry: &registry,
+        };
+        let mut json_de = serde_json::Deserializer::from_str(&json);
+        let scene = match scene_deserializer.deserialize(&mut json_de) {
+            Ok(scene) => scene,
+            Err(err) => {
+                warn!("Failed to deserialize legacy scene: {err}");
+                return;
+            }
+        };
 
-    let mut json_de = serde_json::Deserializer::from_str(&json);
-    let scene = match scene_deserializer.deserialize(&mut json_de) {
-        Ok(scene) => scene,
-        Err(err) => {
-            warn!("Failed to deserialize scene: {err}");
-            return;
+        clear_scene_entities(world);
+        match scene.write_to_world(world, &mut Default::default()) {
+            Ok(_) => info!("Scene loaded from {path} (legacy format)"),
+            Err(err) => warn!("Failed to write scene to world: {err}"),
         }
-    };
+    } else {
+        // JSN format
+        let jsn: JsnScene = match serde_json::from_str(&json) {
+            Ok(jsn) => jsn,
+            Err(err) => {
+                warn!("Failed to parse JSN file: {err}");
+                return;
+            }
+        };
 
-    // Clear existing non-editor entities
-    clear_scene_entities(world);
+        let scene_deserializer = SceneDeserializer {
+            type_registry: &registry,
+        };
+        let scene = match scene_deserializer.deserialize(jsn.scene) {
+            Ok(scene) => scene,
+            Err(err) => {
+                warn!("Failed to deserialize scene data: {err}");
+                return;
+            }
+        };
 
-    // Write the loaded scene to the world
-    match scene.write_to_world(world, &mut Default::default()) {
-        Ok(_) => info!("Scene loaded from {path}"),
-        Err(err) => warn!("Failed to write scene to world: {err}"),
+        clear_scene_entities(world);
+        match scene.write_to_world(world, &mut Default::default()) {
+            Ok(_) => info!("Scene loaded from {path}"),
+            Err(err) => warn!("Failed to write scene to world: {err}"),
+        }
+
+        // Restore metadata
+        let mut scene_path = world.resource_mut::<SceneFilePath>();
+        scene_path.metadata = jsn.metadata;
     }
 
     world.resource_mut::<SceneFilePath>().path = Some(path);
@@ -120,7 +186,9 @@ pub fn load_scene(world: &mut World) {
 
 fn new_scene(world: &mut World) {
     clear_scene_entities(world);
-    world.resource_mut::<SceneFilePath>().path = None;
+    let mut scene_path = world.resource_mut::<SceneFilePath>();
+    scene_path.path = None;
+    scene_path.metadata = JsnMetadata::default();
     info!("New scene created");
 }
 
@@ -152,6 +220,87 @@ fn clear_scene_entities(world: &mut World) {
             entity_mut.despawn();
         }
     }
+}
+
+/// Build an asset manifest by scanning entity components.
+fn build_asset_manifest(world: &mut World) -> JsnAssets {
+    let mut textures = Vec::new();
+    let mut models = Vec::new();
+
+    // Scan brush face textures
+    let mut brush_query = world.query::<&bevy_jsn::Brush>();
+    for brush in brush_query.iter(world) {
+        for face in &brush.faces {
+            if let Some(ref path) = face.texture_path {
+                if !textures.contains(path) {
+                    textures.push(path.clone());
+                }
+            }
+        }
+    }
+
+    // Scan GLTF sources
+    let mut gltf_query = world.query::<&bevy_jsn::GltfSource>();
+    for source in gltf_query.iter(world) {
+        if !models.contains(&source.path) {
+            models.push(source.path.clone());
+        }
+    }
+
+    textures.sort();
+    models.sort();
+
+    JsnAssets { textures, models }
+}
+
+/// ISO 8601 timestamp (simplified — no chrono dependency).
+fn chrono_now() -> String {
+    // Use std::time for a basic timestamp
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = since_epoch.as_secs();
+    // Basic ISO 8601 approximation
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+    // Days since 1970-01-01, approximate year/month/day
+    let (year, month, day) = days_to_date(days);
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+}
+
+fn days_to_date(days: u64) -> (u64, u64, u64) {
+    // Simplified calendar calculation
+    let mut y = 1970;
+    let mut remaining = days;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let month_days = if is_leap(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 0;
+    for (i, &md) in month_days.iter().enumerate() {
+        if remaining < md {
+            m = i;
+            break;
+        }
+        remaining -= md;
+    }
+    (y, m as u64 + 1, remaining + 1)
+}
+
+fn is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 // ---------------------------------------------------------------------------

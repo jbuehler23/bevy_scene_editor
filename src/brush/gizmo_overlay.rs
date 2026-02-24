@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
+use bevy_jsn::Brush;
 use super::{
-    Brush, BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
+    BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
 };
 use super::interaction::{EdgeDragState, VertexDragConstraint, VertexDragState};
 

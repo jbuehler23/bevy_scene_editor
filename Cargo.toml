@@ -8,6 +8,8 @@ members = ["crates/*"]
 
 [dependencies]
 bevy.workspace = true
+bevy_jsn.workspace = true
+bevy_jsn_geometry.workspace = true
 bevy_notify.workspace = true
 bevy_panorbit_camera.workspace = true
 bevy_infinite_grid.workspace = true
@@ -19,6 +21,8 @@ avian3d.workspace = true
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug"] }
+bevy_jsn = { path = "crates/bevy_jsn" }
+bevy_jsn_geometry = { path = "crates/bevy_jsn_geometry" }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
 bevy_panorbit_camera = "0.34"
 bevy_infinite_grid = "0.18"

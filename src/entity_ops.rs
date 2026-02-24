@@ -28,12 +28,15 @@ pub struct ComponentClipboard {
     pub data: Vec<(TypeId, Box<dyn PartialReflect>)>,
 }
 
+// Re-export from bevy_jsn
+pub use bevy_jsn::GltfSource;
+
 pub struct EntityOpsPlugin;
 
 impl Plugin for EntityOpsPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<GltfSource>()
-            .init_resource::<ComponentClipboard>()
+        // Note: GltfSource type registration is handled by JsnPlugin
+        app.init_resource::<ComponentClipboard>()
             .add_systems(Update, handle_entity_keys);
     }
 }
@@ -153,13 +156,6 @@ pub fn create_entity_in_world(world: &mut World, template: EntityTemplate) {
 // ---------------------------------------------------------------------------
 // GLTF loading
 // ---------------------------------------------------------------------------
-
-#[derive(Component, Reflect, Clone)]
-#[reflect(Component)]
-pub struct GltfSource {
-    pub path: String,
-    pub scene_index: usize,
-}
 
 pub fn spawn_gltf(
     commands: &mut Commands,

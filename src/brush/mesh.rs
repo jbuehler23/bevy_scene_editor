@@ -10,7 +10,7 @@ use super::{
     BrushFaceEntity, BrushMaterialPalette, BrushMeshCache, TextureCacheEntry,
     TextureMaterialCache,
 };
-use super::geometry::{compute_brush_geometry, compute_face_uvs, triangulate_face};
+use bevy_jsn_geometry::{compute_brush_geometry, compute_face_uvs, triangulate_face};
 
 pub(super) fn setup_default_materials(
     mut materials: ResMut<Assets<StandardMaterial>>,

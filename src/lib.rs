@@ -53,6 +53,7 @@ impl Plugin for EditorPlugin {
         app.add_plugins((
             FeathersPlugins.build().disable::<InputDispatchPlugin>(),
             EditorFeathersPlugin,
+            bevy_jsn::JsnPlugin,
             inspector::InspectorPlugin,
             hierarchy::HierarchyPlugin,
             viewport::ViewportPlugin,
@@ -64,9 +65,9 @@ impl Plugin for EditorPlugin {
             asset_browser::AssetBrowserPlugin,
             viewport_select::ViewportSelectPlugin,
             snapping::SnappingPlugin,
-            viewport_overlays::ViewportOverlaysPlugin,
         ))
         .add_plugins((
+            viewport_overlays::ViewportOverlaysPlugin,
             view_modes::ViewModesPlugin,
             status_bar::StatusBarPlugin,
             modal_transform::ModalTransformPlugin,
