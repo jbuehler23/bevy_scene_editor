@@ -6,6 +6,7 @@ use crate::{
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::SceneViewport,
+    viewport_util::{point_to_segment_dist, window_to_viewport_cursor},
     EditorEntity,
 };
 
@@ -24,6 +25,11 @@ const COLOR_Z: Color = Color::srgb(0.2, 0.4, 1.0);
 const COLOR_X_BRIGHT: Color = Color::srgb(1.0, 0.5, 0.5);
 const COLOR_Y_BRIGHT: Color = Color::srgb(0.5, 1.0, 0.5);
 const COLOR_Z_BRIGHT: Color = Color::srgb(0.5, 0.7, 1.0);
+const TRANSLATE_SENSITIVITY: f32 = 0.003;
+const ROTATE_SENSITIVITY: f32 = 0.01;
+const SCALE_SENSITIVITY: f32 = 0.005;
+const MIN_SCALE: f32 = 0.01;
+const AXIS_HIT_DISTANCE: f32 = 20.0;
 
 // ---------------------------------------------------------------------------
 // Resources
@@ -197,7 +203,7 @@ fn handle_gizmo_hover(
 
     let mut best_axis = None;
     let mut best_dist = f32::MAX;
-    let threshold = 20.0; // pixels
+    let threshold = AXIS_HIT_DISTANCE;
 
     for (axis, dir) in &axes {
         let endpoint = match *mode {
@@ -324,7 +330,7 @@ fn handle_gizmo_drag(
 
                 // Scale by distance to camera for consistent feel
                 let cam_dist = (cam_tf.translation() - gizmo_pos).length();
-                let scale = cam_dist * 0.003;
+                let scale = cam_dist * TRANSLATE_SENSITIVITY;
 
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
                 let new_pos =
@@ -339,7 +345,7 @@ fn handle_gizmo_drag(
                     GizmoAxis::Z => Vec2::X,
                 };
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-                let raw_angle = mouse_delta.dot(screen_axis) * 0.01;
+                let raw_angle = mouse_delta.dot(screen_axis) * ROTATE_SENSITIVITY;
                 let angle = snap_settings.snap_rotate_if(raw_angle, ctrl);
                 let rotation_delta = Quat::from_axis_angle(axis_dir, angle);
                 transform.rotation = rotation_delta * drag_state.start_transform.rotation;
@@ -356,14 +362,14 @@ fn handle_gizmo_drag(
                 };
                 let screen_axis = (axis_screen - origin_screen).normalize_or_zero();
                 let mouse_delta = viewport_cursor - drag_state.drag_start_screen;
-                let projected = mouse_delta.dot(screen_axis) * 0.005;
+                let projected = mouse_delta.dot(screen_axis) * SCALE_SENSITIVITY;
 
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
                 let mut new_scale = drag_state.start_transform.scale;
                 match axis {
-                    GizmoAxis::X => new_scale.x = (new_scale.x + projected).max(0.01),
-                    GizmoAxis::Y => new_scale.y = (new_scale.y + projected).max(0.01),
-                    GizmoAxis::Z => new_scale.z = (new_scale.z + projected).max(0.01),
+                    GizmoAxis::X => new_scale.x = (new_scale.x + projected).max(MIN_SCALE),
+                    GizmoAxis::Y => new_scale.y = (new_scale.y + projected).max(MIN_SCALE),
+                    GizmoAxis::Z => new_scale.z = (new_scale.z + projected).max(MIN_SCALE),
                 }
                 transform.scale = snap_settings.snap_scale_vec3_if(new_scale, ctrl);
             }
@@ -546,42 +552,3 @@ fn axis_color(axis: GizmoAxis, active: Option<GizmoAxis>) -> Color {
     }
 }
 
-/// Convert window cursor position to viewport-local coordinates in camera space.
-///
-/// The camera renders to an off-screen image whose logical size may differ from
-/// the UI node's logical size (they diverge on HiDPI/fractional-scaling displays).
-/// This function remaps from UI-logical space into the camera's viewport space so
-/// that `camera.viewport_to_world()` and `camera.world_to_viewport()` produce
-/// correct results.
-pub(crate) fn window_to_viewport_cursor(
-    cursor_pos: Vec2,
-    camera: &Camera,
-    viewport_query: &Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-) -> Option<Vec2> {
-    let Ok((computed, vp_transform)) = viewport_query.single() else {
-        return Some(cursor_pos);
-    };
-    // Convert from physical pixels to logical pixels to match cursor_position()
-    let scale = computed.inverse_scale_factor();
-    let vp_pos = vp_transform.translation * scale;
-    let vp_size = computed.size() * scale;
-    // ComputedNode position is the center, convert to top-left
-    let vp_top_left = vp_pos - vp_size / 2.0;
-    let local = cursor_pos - vp_top_left;
-    if local.x >= 0.0 && local.y >= 0.0 && local.x <= vp_size.x && local.y <= vp_size.y {
-        // Remap from UI-logical space to camera render-target space
-        let target_size = camera.logical_viewport_size().unwrap_or(vp_size);
-        Some(local * target_size / vp_size)
-    } else {
-        None
-    }
-}
-
-/// Distance from a point to a line segment.
-pub(crate) fn point_to_segment_dist(point: Vec2, a: Vec2, b: Vec2) -> f32 {
-    let ab = b - a;
-    let ap = point - a;
-    let t = (ap.dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
-    let closest = a + ab * t;
-    (point - closest).length()
-}

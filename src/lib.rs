@@ -21,6 +21,7 @@ pub mod view_modes;
 pub mod viewport;
 pub mod viewport_overlays;
 pub mod viewport_select;
+pub mod viewport_util;
 
 use bevy::{
     feathers::{FeathersPlugins, dark_theme::create_dark_theme, theme::UiTheme},

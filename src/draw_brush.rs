@@ -12,12 +12,16 @@ use crate::{
         compute_face_tangent_axes, subtract_brush,
     },
     commands::{CommandHistory, EditorCommand, snapshot_entity, snapshot_rebuild},
-    gizmos::window_to_viewport_cursor,
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::SceneViewport,
+    viewport_util::window_to_viewport_cursor,
     EditorEntity,
 };
+
+const EXTRUDE_DEPTH_SENSITIVITY: f32 = 0.003;
+const MIN_FOOTPRINT_SIZE: f32 = 0.01;
+const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -282,7 +286,7 @@ fn draw_brush_update(
                 let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
                 let mouse_delta = viewport_cursor - active.extrude_start_cursor;
                 let projected = mouse_delta.dot(screen_dir);
-                let raw_depth = projected * cam_dist * 0.003;
+                let raw_depth = projected * cam_dist * EXTRUDE_DEPTH_SENSITIVITY;
 
                 // Snap depth
                 let depth = if snap_settings.translate_active(ctrl)
@@ -347,7 +351,7 @@ fn draw_brush_confirm(
             let delta = active.corner2 - active.corner1;
             let u_size = delta.dot(active.plane.axis_u).abs();
             let v_size = delta.dot(active.plane.axis_v).abs();
-            if u_size < 0.01 || v_size < 0.01 {
+            if u_size < MIN_FOOTPRINT_SIZE || v_size < MIN_FOOTPRINT_SIZE {
                 return; // Too small, keep drawing
             }
             active.phase = DrawPhase::ExtrudingDepth;
@@ -355,7 +359,7 @@ fn draw_brush_confirm(
             active.depth = 0.0;
         }
         DrawPhase::ExtrudingDepth => {
-            if active.depth.abs() < 0.01 {
+            if active.depth.abs() < MIN_EXTRUDE_DEPTH {
                 return; // No depth, keep extruding
             }
             let active_owned = active.clone();

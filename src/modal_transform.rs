@@ -2,10 +2,11 @@ use bevy::{input_focus::InputFocus, prelude::*, ui::UiGlobalTransform};
 
 use crate::{
     commands::{CommandHistory, SetTransform},
-    gizmos::{GizmoAxis, GizmoDragState, GizmoHoverState, GizmoMode, window_to_viewport_cursor},
+    gizmos::{GizmoAxis, GizmoDragState, GizmoHoverState, GizmoMode},
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::SceneViewport,
+    viewport_util::window_to_viewport_cursor,
     EditorEntity,
 };
 

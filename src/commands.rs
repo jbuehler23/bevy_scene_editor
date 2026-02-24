@@ -387,7 +387,7 @@ pub(crate) fn snapshot_entity(world: &World, entity: Entity) -> DynamicScene {
         .build()
 }
 
-pub fn collect_entity_ids(world: &World, entity: Entity, out: &mut Vec<Entity>) {
+pub(crate) fn collect_entity_ids(world: &World, entity: Entity, out: &mut Vec<Entity>) {
     out.push(entity);
     if let Some(children) = world.get::<Children>(entity) {
         for child in children.iter() {

@@ -6,6 +6,14 @@ use crate::modal_transform::{ModalOp, ModalTransformState, ViewportDragState};
 use crate::selection::Selected;
 use crate::viewport_overlays::{self, OverlaySettings};
 
+const SPIKE_LENGTH_SCALE: f32 = 0.8;
+const SPIKE_LENGTH_MIN: f32 = 10.0;
+const SPIKE_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.5);
+const ALIGN_THRESHOLD_FACTOR: f32 = 0.005;
+const SNAP_THRESHOLD_FACTOR: f32 = 0.003;
+const ALIGN_COLOR: Color = Color::srgba(0.0, 1.0, 1.0, 0.6);
+const OVERLAP_FRACTION: f32 = 0.25;
+
 pub struct AlignmentGuidesPlugin;
 
 impl Plugin for AlignmentGuidesPlugin {
@@ -228,21 +236,19 @@ fn draw_alignment_guides(
     let d_center = (d_min + d_max) * 0.5;
 
     // --- Spike guides (from AABB center, not transform origin) ---
-    let spike_length = (cam_distance * 0.8).max(10.0);
+    let spike_length = (cam_distance * SPIKE_LENGTH_SCALE).max(SPIKE_LENGTH_MIN);
     let axes = [Vec3::X, Vec3::Y, Vec3::Z];
-    let spike_color_base = Color::srgba(1.0, 1.0, 0.0, 0.5);
 
     for axis in &axes {
         for sign in [-1.0f32, 1.0] {
             let end = d_center + *axis * sign * spike_length;
-            gizmos.line(d_center, end, spike_color_base);
+            gizmos.line(d_center, end, SPIKE_COLOR);
         }
     }
 
     // --- Object-to-object alignment ---
-    let threshold = cam_distance * 0.005;
-    let snap_threshold = cam_distance * 0.003;
-    let align_color = Color::srgba(0.0, 1.0, 1.0, 0.6);
+    let threshold = cam_distance * ALIGN_THRESHOLD_FACTOR;
+    let snap_threshold = cam_distance * SNAP_THRESHOLD_FACTOR;
 
     // Track best snap per axis: (delta, r_val for line drawing, ref AABB)
     let mut best_snap: [Option<(f32, f32, f32, Vec3, Vec3)>; 3] = [None; 3]; // (abs_delta, delta, aligned_val, ref_min, ref_max)
@@ -281,7 +287,7 @@ fn draw_alignment_guides(
                         d_max,
                         ref_aabb.min,
                         ref_aabb.max,
-                        align_color,
+                        ALIGN_COLOR,
                     );
 
                     // Track closest snap per axis
@@ -324,7 +330,7 @@ fn draw_alignment_line(
     d_max: Vec3,
     r_min: Vec3,
     r_max: Vec3,
-    align_color: Color,
+    color: Color,
 ) {
     // Pick the perpendicular axis with the largest combined extent to draw along
     let perp_axes: [(usize, usize); 3] = [(1, 2), (0, 2), (0, 1)];
@@ -339,7 +345,7 @@ fn draw_alignment_line(
         let d_perp_extent = d_max[perp] - d_min[perp];
         let r_perp_extent = r_max[perp] - r_min[perp];
         let separation = (d_perp_center - r_perp_center).abs();
-        if separation < (d_perp_extent + r_perp_extent) * 0.25 {
+        if separation < (d_perp_extent + r_perp_extent) * OVERLAP_FRACTION {
             continue; // entities overlap on this axis, skip
         }
 
@@ -362,7 +368,7 @@ fn draw_alignment_line(
         start[other_perp] = other_mid;
         end[other_perp] = other_mid;
 
-        gizmos.line(start, end, align_color);
+        gizmos.line(start, end, color);
         return; // Only draw along one perp axis
     }
 
@@ -371,5 +377,5 @@ fn draw_alignment_line(
     let mut end = (r_min + r_max) * 0.5;
     start[axis_idx] = aligned_val;
     end[axis_idx] = aligned_val;
-    gizmos.line(start, end, align_color);
+    gizmos.line(start, end, color);
 }

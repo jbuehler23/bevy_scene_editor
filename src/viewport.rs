@@ -12,6 +12,9 @@ use bevy_panorbit_camera::{ActiveCameraData, PanOrbitCamera, PanOrbitCameraPlugi
 use crate::selection::{Selected, Selection};
 use editor_widgets::file_browser::FileBrowserItem;
 
+const DEFAULT_VIEWPORT_WIDTH: u32 = 1280;
+const DEFAULT_VIEWPORT_HEIGHT: u32 = 720;
+
 /// Marker on the center-panel UI node that hosts the 3D viewport.
 #[derive(Component)]
 pub struct SceneViewport;
@@ -44,8 +47,8 @@ fn setup_viewport(
 ) {
     // Create render-target image
     let size = Extent3d {
-        width: 1280,
-        height: 720,
+        width: DEFAULT_VIEWPORT_WIDTH,
+        height: DEFAULT_VIEWPORT_HEIGHT,
         depth_or_array_layers: 1,
     };
     let mut image = Image::new_fill(
