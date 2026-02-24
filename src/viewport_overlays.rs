@@ -45,6 +45,8 @@ pub struct OverlaySettings {
     pub show_bounding_boxes: bool,
     pub show_coordinate_indicator: bool,
     pub bounding_box_mode: BoundingBoxMode,
+    pub show_face_grid: bool,
+    pub show_alignment_guides: bool,
 }
 
 impl Default for OverlaySettings {
@@ -53,6 +55,8 @@ impl Default for OverlaySettings {
             show_bounding_boxes: true,
             show_coordinate_indicator: true,
             bounding_box_mode: BoundingBoxMode::default(),
+            show_face_grid: true,
+            show_alignment_guides: true,
         }
     }
 }
@@ -143,7 +147,7 @@ fn draw_selection_bounding_boxes(
 }
 
 /// Compute axis-aligned bounding box from a set of points.
-fn aabb_from_points(points: &[Vec3]) -> (Vec3, Vec3) {
+pub(crate) fn aabb_from_points(points: &[Vec3]) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
     for &p in points {
@@ -207,7 +211,7 @@ fn draw_hull_wireframe(
 }
 
 /// Recursively collect world-space vertex positions from Mesh3d components.
-fn collect_descendant_mesh_world_vertices(
+pub(crate) fn collect_descendant_mesh_world_vertices(
     entity: Entity,
     children_query: &Query<&Children>,
     mesh_query: &Query<(&Mesh3d, &GlobalTransform)>,

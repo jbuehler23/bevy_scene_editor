@@ -1,3 +1,4 @@
+pub mod alignment_guides;
 pub mod asset_browser;
 pub mod brush;
 pub mod commands;
@@ -5,6 +6,7 @@ pub mod custom_properties;
 pub mod draw_brush;
 pub mod entity_ops;
 pub mod entity_templates;
+pub mod face_grid;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
@@ -72,6 +74,8 @@ impl Plugin for EditorPlugin {
             brush::BrushPlugin,
             texture_browser::TextureBrowserPlugin,
             draw_brush::DrawBrushPlugin,
+            face_grid::FaceGridPlugin,
+            alignment_guides::AlignmentGuidesPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
         .init_resource::<layout::KeybindHelpPopover>()
@@ -162,6 +166,8 @@ fn populate_menu(world: &mut World) {
                     ("view.wireframe", "Toggle Wireframe"),
                     ("view.bounding_boxes", "Toggle Bounding Boxes"),
                     ("view.bounding_box_mode", "Cycle Bounding Box Mode"),
+                    ("view.face_grid", "Toggle Face Grid"),
+                    ("view.alignment_guides", "Toggle Alignment Guides"),
                 ],
             ),
             (
@@ -254,6 +260,20 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                         viewport_overlays::BoundingBoxMode::Aabb
                     }
                 };
+            });
+        }
+        "view.face_grid" => {
+            commands.queue(|world: &mut World| {
+                let mut settings =
+                    world.resource_mut::<viewport_overlays::OverlaySettings>();
+                settings.show_face_grid = !settings.show_face_grid;
+            });
+        }
+        "view.alignment_guides" => {
+            commands.queue(|world: &mut World| {
+                let mut settings =
+                    world.resource_mut::<viewport_overlays::OverlaySettings>();
+                settings.show_alignment_guides = !settings.show_alignment_guides;
             });
         }
         "add.cube" => {
