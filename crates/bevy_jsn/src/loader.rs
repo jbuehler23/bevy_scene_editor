@@ -5,12 +5,15 @@ use bevy::{
         world::{FromWorld, World},
     },
     prelude::*,
-    reflect::TypeRegistryArc,
-    scene::serde::SceneDeserializer,
+    reflect::{
+        serde::TypedReflectDeserializer,
+        TypeRegistryArc,
+    },
+    scene::DynamicScene,
 };
 use serde::de::DeserializeSeed;
 
-use crate::format::JsnScene;
+use crate::format::{JsnEntity, JsnScene};
 
 /// Asset loader for `.jsn` files → `DynamicScene`.
 #[derive(Debug, TypePath)]
@@ -50,15 +53,9 @@ impl AssetLoader for JsnAssetLoader {
         let jsn: JsnScene = serde_json::from_str(text)
             .map_err(|e| JsnLoadError::Parse(e.to_string()))?;
 
-        // Deserialize the inner scene value using Bevy's SceneDeserializer
-        let registry = self.type_registry.read();
-        let scene_deserializer = SceneDeserializer {
-            type_registry: &registry,
-        };
-
-        let scene = scene_deserializer
-            .deserialize(jsn.scene)
-            .map_err(|e| JsnLoadError::Scene(e.to_string()))?;
+        // Build a DynamicScene by spawning into a temporary world
+        let scene = build_dynamic_scene(&jsn.scene, &self.type_registry)
+            .map_err(|e| JsnLoadError::Scene(e))?;
 
         Ok(scene)
     }
@@ -66,6 +63,75 @@ impl AssetLoader for JsnAssetLoader {
     fn extensions(&self) -> &[&str] {
         &["jsn"]
     }
+}
+
+/// Spawn JsnEntity list into a temp world, then extract a DynamicScene.
+fn build_dynamic_scene(
+    entities: &[JsnEntity],
+    type_registry: &TypeRegistryArc,
+) -> Result<DynamicScene, String> {
+    let mut world = World::new();
+
+    // First pass: spawn entities with core fields
+    let mut spawned: Vec<Entity> = Vec::new();
+    for jsn in entities {
+        let mut entity = world.spawn_empty();
+        if let Some(name) = &jsn.name {
+            entity.insert(Name::new(name.clone()));
+        }
+        if let Some(t) = &jsn.transform {
+            entity.insert(Transform::from(t.clone()));
+        }
+        let vis: Visibility = jsn.visibility.clone().into();
+        entity.insert(vis);
+        spawned.push(entity.id());
+    }
+
+    // Second pass: set parents (ChildOf)
+    for (i, jsn) in entities.iter().enumerate() {
+        if let Some(parent_idx) = jsn.parent {
+            if let Some(&parent_entity) = spawned.get(parent_idx) {
+                world.entity_mut(spawned[i]).insert(ChildOf(parent_entity));
+            }
+        }
+    }
+
+    // Third pass: deserialize extensible components via reflection
+    let registry = type_registry.read();
+    for (i, jsn) in entities.iter().enumerate() {
+        for (type_path, value) in &jsn.components {
+            let Some(registration) = registry.get_with_type_path(type_path) else {
+                warn!("Unknown type '{type_path}' — skipping");
+                continue;
+            };
+            let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+                continue;
+            };
+            let deserializer = TypedReflectDeserializer::new(registration, &registry);
+            let Ok(reflected) = deserializer.deserialize(value) else {
+                warn!("Failed to deserialize '{type_path}' — skipping");
+                continue;
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reflect_component.insert(
+                    &mut world.entity_mut(spawned[i]),
+                    reflected.as_ref(),
+                    &registry,
+                );
+            }));
+            if result.is_err() {
+                warn!("Panic while inserting component '{type_path}' — skipping");
+            }
+        }
+    }
+    drop(registry);
+
+    // Extract all spawned entities into a DynamicScene
+    let scene = DynamicSceneBuilder::from_world(&world)
+        .extract_entities(spawned.into_iter())
+        .build();
+
+    Ok(scene)
 }
 
 #[derive(Debug, thiserror::Error)]

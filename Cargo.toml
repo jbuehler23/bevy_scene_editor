@@ -18,6 +18,7 @@ editor_widgets.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 avian3d.workspace = true
+rfd.workspace = true
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug"] }
@@ -34,6 +35,7 @@ serde_json = "1"
 bevy_ui_text_input = "0.7"
 bevy_easings = "0.18.0"
 avian3d = { version = "0.5", default-features = false, features = ["3d", "parry-f32"] }
+rfd = "0.15"
 
 # Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
 [workspace.lints.clippy]

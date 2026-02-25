@@ -1,13 +1,19 @@
+use std::any::TypeId;
+use std::collections::{HashMap, HashSet};
+
 use bevy::{
+    asset::AssetPath,
     ecs::reflect::AppTypeRegistry,
     prelude::*,
-    scene::serde::{SceneDeserializer, SceneSerializer},
+    reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer},
     tasks::IoTaskPool,
 };
+use bevy_jsn::format::JsnEntity;
 use serde::de::DeserializeSeed;
 
 use crate::{
     commands::{collect_entity_ids, CommandHistory, DespawnEntity, EditorCommand},
+    scene_io::should_skip_component,
     selection::{Selected, Selection},
     EditorEntity,
 };
@@ -46,17 +52,75 @@ pub fn save_entity_template(world: &mut World, name: &str) {
     let mut entities = Vec::new();
     collect_entity_ids(world, primary, &mut entities);
 
-    // Build DynamicScene
-    let scene = DynamicSceneBuilder::from_world(world)
-        .extract_entities(entities.into_iter())
-        .build();
+    // Build entity → index map for parent references
+    let index_map: HashMap<Entity, usize> = entities
+        .iter()
+        .enumerate()
+        .map(|(i, &e)| (e, i))
+        .collect();
 
-    // Serialize
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
 
-    let serializer = SceneSerializer::new(&scene, &registry);
-    let json = match serde_json::to_string_pretty(&serializer) {
+    // Component types handled as explicit fields
+    let skip_ids: HashSet<TypeId> = HashSet::from([
+        TypeId::of::<Name>(),
+        TypeId::of::<Transform>(),
+        TypeId::of::<GlobalTransform>(),
+        TypeId::of::<Visibility>(),
+        TypeId::of::<InheritedVisibility>(),
+        TypeId::of::<ViewVisibility>(),
+        TypeId::of::<ChildOf>(),
+        TypeId::of::<Children>(),
+    ]);
+
+    let jsn_entities: Vec<JsnEntity> = entities
+        .iter()
+        .map(|&entity| {
+            let entity_ref = world.entity(entity);
+
+            let name = entity_ref.get::<Name>().map(|n| n.to_string());
+            let transform = entity_ref.get::<Transform>().map(|t| (*t).into());
+            let visibility = entity_ref
+                .get::<Visibility>()
+                .map(|v| (*v).into())
+                .unwrap_or_default();
+            let parent = entity_ref
+                .get::<ChildOf>()
+                .and_then(|c| index_map.get(&c.parent()).copied());
+
+            let mut components = HashMap::new();
+            for registration in registry.iter() {
+                if skip_ids.contains(&registration.type_id()) {
+                    continue;
+                }
+                let type_path = registration.type_info().type_path_table().path();
+                if should_skip_component(type_path) {
+                    continue;
+                }
+                let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+                    continue;
+                };
+                let Some(component) = reflect_component.reflect(entity_ref) else {
+                    continue;
+                };
+                let serializer = TypedReflectSerializer::new(component, &registry);
+                if let Ok(value) = serde_json::to_value(&serializer) {
+                    components.insert(type_path.to_string(), value);
+                }
+            }
+
+            JsnEntity {
+                name,
+                transform,
+                visibility,
+                parent,
+                components,
+            }
+        })
+        .collect();
+
+    let json = match serde_json::to_string_pretty(&jsn_entities) {
         Ok(json) => json,
         Err(err) => {
             warn!("Failed to serialize template: {err}");
@@ -95,44 +159,92 @@ pub fn instantiate_template(world: &mut World, path: &str, position: Vec3) {
         }
     };
 
-    let registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = registry.read();
-
-    let scene_deserializer = SceneDeserializer {
-        type_registry: &registry,
-    };
-
-    let mut json_de = serde_json::Deserializer::from_str(&json);
-    let scene = match scene_deserializer.deserialize(&mut json_de) {
-        Ok(scene) => scene,
+    let jsn_entities: Vec<JsnEntity> = match serde_json::from_str(&json) {
+        Ok(v) => v,
         Err(err) => {
-            warn!("Failed to deserialize template: {err}");
+            warn!("Failed to parse template file: {err}");
             return;
         }
     };
 
-    drop(registry);
+    let registry = world.resource::<AppTypeRegistry>().clone();
 
-    // Write scene to world
-    let mut entity_map = Default::default();
-    if let Err(err) = scene.write_to_world(world, &mut entity_map) {
-        warn!("Failed to instantiate template: {err}");
-        return;
+    // First pass: spawn entities with core fields
+    let mut spawned: Vec<Entity> = Vec::new();
+    for jsn in &jsn_entities {
+        let mut entity = world.spawn_empty();
+        if let Some(name) = &jsn.name {
+            entity.insert(Name::new(name.clone()));
+        }
+        if let Some(t) = &jsn.transform {
+            entity.insert(Transform::from(t.clone()));
+        }
+        let vis: Visibility = jsn.visibility.clone().into();
+        entity.insert(vis);
+        spawned.push(entity.id());
     }
 
-    // Find root entities (those without ChildOf pointing to another entity in the map)
-    let mapped_entities: std::collections::HashSet<Entity> =
-        entity_map.values().copied().collect();
+    // Second pass: set parents (ChildOf)
+    for (i, jsn) in jsn_entities.iter().enumerate() {
+        if let Some(parent_idx) = jsn.parent {
+            if let Some(&parent_entity) = spawned.get(parent_idx) {
+                world.entity_mut(spawned[i]).insert(ChildOf(parent_entity));
+            }
+        }
+    }
+
+    // Third pass: deserialize extensible components via reflection
+    {
+        let registry = registry.read();
+        for (i, jsn) in jsn_entities.iter().enumerate() {
+            for (type_path, value) in &jsn.components {
+                let Some(registration) = registry.get_with_type_path(type_path) else {
+                    warn!("Unknown type '{type_path}' — skipping");
+                    continue;
+                };
+                let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+                    continue;
+                };
+                let deserializer = TypedReflectDeserializer::new(registration, &registry);
+                let Ok(reflected) = deserializer.deserialize(value) else {
+                    warn!("Failed to deserialize '{type_path}' — skipping");
+                    continue;
+                };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    reflect_component.insert(
+                        &mut world.entity_mut(spawned[i]),
+                        reflected.as_ref(),
+                        &registry,
+                    );
+                }));
+                if result.is_err() {
+                    warn!("Panic while inserting component '{type_path}' — skipping");
+                }
+            }
+        }
+    }
+
+    // Post-load: re-trigger GLTF loading for GltfSource entities
+    let gltf_entities: Vec<(Entity, String, usize)> = spawned
+        .iter()
+        .filter_map(|&e| {
+            world
+                .get::<bevy_jsn::GltfSource>(e)
+                .map(|gs| (e, gs.path.clone(), gs.scene_index))
+        })
+        .collect();
+    for (entity, gltf_path, scene_index) in gltf_entities {
+        let asset_server = world.resource::<AssetServer>();
+        let asset_path: AssetPath<'static> = gltf_path.into();
+        let scene = asset_server.load(GltfAssetLabel::Scene(scene_index).from_asset(asset_path));
+        world.entity_mut(entity).insert(SceneRoot(scene));
+    }
+
+    // Find root entities (those without a parent in the template)
     let mut roots = Vec::new();
-    for &new_entity in entity_map.values() {
-        let is_child_of_template = world
-            .get::<ChildOf>(new_entity)
-            .map(|c| mapped_entities.contains(&c.0))
-            .unwrap_or(false);
-        if !is_child_of_template {
-            roots.push(new_entity);
-            // Remove any stale ChildOf from the scene write
-            world.entity_mut(new_entity).remove::<ChildOf>();
+    for (i, jsn) in jsn_entities.iter().enumerate() {
+        if jsn.parent.is_none() {
+            roots.push(spawned[i]);
         }
     }
 

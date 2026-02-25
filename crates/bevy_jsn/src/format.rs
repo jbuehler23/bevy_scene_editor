@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Top-level `.jsn` file structure.
@@ -11,8 +14,88 @@ pub struct JsnScene {
     pub assets: JsnAssets,
     /// Reserved for future editor state (camera bookmarks, snap settings, etc.).
     pub editor: Option<JsnEditorState>,
-    /// The Bevy DynamicScene data, serialized as raw JSON.
-    pub scene: serde_json::Value,
+    /// Per-entity scene data with reflection-based components.
+    pub scene: Vec<JsnEntity>,
+}
+
+// ---------------------------------------------------------------------------
+// Per-entity scene types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct JsnTransform {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
+impl From<Transform> for JsnTransform {
+    fn from(t: Transform) -> Self {
+        Self {
+            translation: t.translation,
+            rotation: t.rotation,
+            scale: t.scale,
+        }
+    }
+}
+
+impl From<JsnTransform> for Transform {
+    fn from(t: JsnTransform) -> Self {
+        Self {
+            translation: t.translation,
+            rotation: t.rotation,
+            scale: t.scale,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum JsnVisibility {
+    #[default]
+    Inherited,
+    Visible,
+    Hidden,
+}
+
+impl JsnVisibility {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Inherited
+    }
+}
+
+impl From<Visibility> for JsnVisibility {
+    fn from(v: Visibility) -> Self {
+        match v {
+            Visibility::Inherited => Self::Inherited,
+            Visibility::Visible => Self::Visible,
+            Visibility::Hidden => Self::Hidden,
+        }
+    }
+}
+
+impl From<JsnVisibility> for Visibility {
+    fn from(v: JsnVisibility) -> Self {
+        match v {
+            JsnVisibility::Inherited => Self::Inherited,
+            JsnVisibility::Visible => Self::Visible,
+            JsnVisibility::Hidden => Self::Hidden,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct JsnEntity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<JsnTransform>,
+    #[serde(default, skip_serializing_if = "JsnVisibility::is_default")]
+    pub visibility: JsnVisibility,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<usize>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub components: HashMap<String, serde_json::Value>,
 }
 
 /// Format version and tool info.

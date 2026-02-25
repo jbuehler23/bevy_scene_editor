@@ -151,7 +151,15 @@ fn populate_menu(world: &mut World) {
         world,
         menu_bar_entity,
         vec![
-            ("File", vec![("file.open", "Open"), ("file.save", "Save"), ("---", ""), ("file.save_template", "Save Selection as Template")]),
+            ("File", vec![
+                ("file.new", "New"),
+                ("file.open", "Open"),
+                ("---", ""),
+                ("file.save", "Save"),
+                ("file.save_as", "Save As..."),
+                ("---", ""),
+                ("file.save_template", "Save Selection as Template"),
+            ]),
             (
                 "Edit",
                 vec![
@@ -192,9 +200,19 @@ fn populate_menu(world: &mut World) {
 
 fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
     match event.action.as_str() {
+        "file.new" => {
+            commands.queue(|world: &mut World| {
+                scene_io::new_scene(world);
+            });
+        }
         "file.save" => {
             commands.queue(|world: &mut World| {
                 scene_io::save_scene(world);
+            });
+        }
+        "file.save_as" => {
+            commands.queue(|world: &mut World| {
+                scene_io::save_scene_as(world);
             });
         }
         "file.open" => {
