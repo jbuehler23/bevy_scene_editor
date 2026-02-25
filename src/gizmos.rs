@@ -333,9 +333,9 @@ fn handle_gizmo_drag(
                 let scale = cam_dist * TRANSLATE_SENSITIVITY;
 
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-                let new_pos =
-                    drag_state.start_transform.translation + axis_dir * projected * scale;
-                transform.translation = snap_settings.snap_translate_vec3_if(new_pos, ctrl);
+                let raw_delta = axis_dir * projected * scale;
+                let snapped_delta = snap_settings.snap_translate_vec3_if(raw_delta, ctrl);
+                transform.translation = drag_state.start_transform.translation + snapped_delta;
             }
             GizmoMode::Rotate => {
                 let mouse_delta = viewport_cursor - drag_state.drag_start_screen;

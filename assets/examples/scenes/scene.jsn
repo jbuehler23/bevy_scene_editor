@@ -1,0 +1,373 @@
+{
+  "jsn": {
+    "format_version": [
+      1,
+      0,
+      0
+    ],
+    "editor_version": "0.1.0",
+    "bevy_version": "0.18"
+  },
+  "metadata": {
+    "name": "Untitled",
+    "description": "",
+    "author": "",
+    "created": "2026-02-25T16:01:20Z",
+    "modified": "2026-02-25T16:01:20Z"
+  },
+  "assets": {
+    "textures": [],
+    "models": []
+  },
+  "editor": null,
+  "scene": [
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "name": "Sun",
+      "transform": {
+        "translation": [
+          10.0,
+          20.0,
+          10.0
+        ],
+        "rotation": [
+          -0.3816559,
+          0.18298657,
+          -0.07736548,
+          0.9027011
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "components": {
+        "bevy_light::cascade::CascadeShadowConfig": {
+          "bounds": [
+            10.0,
+            24.662120819091797,
+            60.822021484375,
+            149.99998474121094
+          ],
+          "minimum_distance": 0.10000000149011612,
+          "overlap_proportion": 0.20000000298023224
+        },
+        "bevy_light::directional_light::DirectionalLight": {
+          "affects_lightmapped_mesh_diffuse": true,
+          "color": {
+            "LinearRgba": {
+              "alpha": 1.0,
+              "blue": 1.0,
+              "green": 1.0,
+              "red": 1.0
+            }
+          },
+          "illuminance": 10000.0,
+          "shadow_depth_bias": 0.019999999552965164,
+          "shadow_normal_bias": 1.7999999523162842,
+          "shadows_enabled": true
+        }
+      }
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "parent": 8
+    },
+    {
+      "name": "Brush",
+      "transform": {
+        "translation": [
+          1.0,
+          1.125,
+          1.25
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "components": {
+        "bevy_jsn::types::Brush": {
+          "faces": [
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.0,
+                "normal": [
+                  1.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            },
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.0,
+                "normal": [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            },
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.125,
+                "normal": [
+                  0.0,
+                  1.0,
+                  0.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            },
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.125,
+                "normal": [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            },
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.25,
+                "normal": [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            },
+            {
+              "material_index": 0,
+              "plane": {
+                "distance": 1.25,
+                "normal": [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              },
+              "texture_path": null,
+              "uv_offset": [
+                0.0,
+                0.0
+              ],
+              "uv_rotation": 0.0,
+              "uv_scale": [
+                1.0,
+                1.0
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

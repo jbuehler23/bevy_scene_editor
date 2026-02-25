@@ -325,8 +325,8 @@ fn modal_grab(
             let forward_h = Vec3::new(cam_forward.x, 0.0, cam_forward.z).normalize_or_zero();
 
             let offset = right_h * mouse_delta.x * scale + forward_h * (-mouse_delta.y) * scale;
-            let new_pos = start_pos + offset;
-            transform.translation = snap_settings.snap_translate_vec3_if(new_pos, ctrl);
+            let snapped_offset = snap_settings.snap_translate_vec3_if(offset, ctrl);
+            transform.translation = start_pos + snapped_offset;
         }
         ModalConstraint::Axis(axis) => {
             let axis_dir = axis_to_vec3(axis);
@@ -345,8 +345,9 @@ fn modal_grab(
             let cam_dist = (cam_tf.translation() - gizmo_pos).length();
             let scale = cam_dist * 0.003;
 
-            let new_pos = active.start_transform.translation + axis_dir * projected * scale;
-            transform.translation = snap_settings.snap_translate_vec3_if(new_pos, ctrl);
+            let raw_delta = axis_dir * projected * scale;
+            let snapped_delta = snap_settings.snap_translate_vec3_if(raw_delta, ctrl);
+            transform.translation = active.start_transform.translation + snapped_delta;
         }
         ModalConstraint::Plane(excluded_axis) => {
             let gizmo_pos = active.start_transform.translation;
@@ -373,8 +374,8 @@ fn modal_grab(
                 offset += *dir * projected * scale;
             }
 
-            let new_pos = active.start_transform.translation + offset;
-            transform.translation = snap_settings.snap_translate_vec3_if(new_pos, ctrl);
+            let snapped_offset = snap_settings.snap_translate_vec3_if(offset, ctrl);
+            transform.translation = active.start_transform.translation + snapped_offset;
         }
     }
 }
@@ -588,10 +589,10 @@ fn viewport_drag_update(
     let forward_h = Vec3::new(cam_forward.x, 0.0, cam_forward.z).normalize_or_zero();
 
     let offset = right_h * mouse_delta.x * scale + forward_h * (-mouse_delta.y) * scale;
-    let new_pos = start_pos + offset;
+    let snapped_offset = snap_settings.snap_translate_vec3_if(offset, ctrl);
 
     if let Ok(mut transform) = transforms.get_mut(active.entity) {
-        transform.translation = snap_settings.snap_translate_vec3_if(new_pos, ctrl);
+        transform.translation = start_pos + snapped_offset;
     }
 }
 

@@ -71,6 +71,7 @@ fn build_dynamic_scene(
     type_registry: &TypeRegistryArc,
 ) -> Result<DynamicScene, String> {
     let mut world = World::new();
+    world.insert_resource(AppTypeRegistry(type_registry.clone()));
 
     // First pass: spawn entities with core fields
     let mut spawned: Vec<Entity> = Vec::new();
