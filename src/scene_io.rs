@@ -10,7 +10,7 @@ use bevy::{
     tasks::IoTaskPool,
     window::{PrimaryWindow, RawHandleWrapper},
 };
-use bevy_jsn::format::{JsnAssets, JsnEntity, JsnHeader, JsnMetadata, JsnScene};
+use jackdaw_jsn::format::{JsnAssets, JsnEntity, JsnHeader, JsnMetadata, JsnScene};
 use rfd::AsyncFileDialog;
 use serde::de::DeserializeSeed;
 
@@ -33,7 +33,7 @@ const SKIP_COMPONENT_PATHS: &[&str] = &[
 ];
 
 pub fn should_skip_component(type_path: &str) -> bool {
-    if type_path.starts_with("bevy_scene_editor") {
+    if type_path.starts_with("jackdaw") {
         return true;
     }
     for prefix in SKIP_COMPONENT_PREFIXES {
@@ -462,7 +462,7 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
         .iter()
         .filter_map(|&e| {
             world
-                .get::<bevy_jsn::GltfSource>(e)
+                .get::<jackdaw_jsn::GltfSource>(e)
                 .map(|gs| (e, gs.path.clone(), gs.scene_index))
         })
         .collect();
@@ -538,7 +538,7 @@ fn build_asset_manifest(world: &mut World) -> JsnAssets {
     let mut models = Vec::new();
 
     // Scan brush face textures
-    let mut brush_query = world.query::<&bevy_jsn::Brush>();
+    let mut brush_query = world.query::<&jackdaw_jsn::Brush>();
     for brush in brush_query.iter(world) {
         for face in &brush.faces {
             if let Some(ref path) = face.texture_path {
@@ -550,7 +550,7 @@ fn build_asset_manifest(world: &mut World) -> JsnAssets {
     }
 
     // Scan GLTF sources
-    let mut gltf_query = world.query::<&bevy_jsn::GltfSource>();
+    let mut gltf_query = world.query::<&jackdaw_jsn::GltfSource>();
     for source in gltf_query.iter(world) {
         if !models.contains(&source.path) {
             models.push(source.path.clone());

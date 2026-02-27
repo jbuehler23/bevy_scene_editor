@@ -8,7 +8,7 @@
 //! ```
 
 use bevy::prelude::*;
-use bevy_jsn::JsnPlugin;
+use jackdaw_jsn::JsnPlugin;
 
 fn main() -> AppExit {
     App::new()

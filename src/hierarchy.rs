@@ -3,15 +3,15 @@ use std::collections::HashSet;
 
 use bevy::{input_focus::InputFocus, prelude::*, ui::ui_transform::UiGlobalTransform};
 use bevy_notify::prelude::{Mutation, NotifyChanged};
-use editor_feathers::{
+use jackdaw_feathers::{
     context_menu::spawn_context_menu,
     icons::IconFont,
     text_input, tokens,
     tree_view::{tree_row, TreeRowStyle, ROW_BG},
 };
-use editor_widgets::context_menu::{ContextMenuAction, ContextMenuCloseSet, ContextMenuState};
-use editor_widgets::text_input::{EnteredText, TextInput, TextInputPlacholder};
-use editor_widgets::tree_view::{
+use jackdaw_widgets::context_menu::{ContextMenuAction, ContextMenuCloseSet, ContextMenuState};
+use jackdaw_widgets::text_input::{EnteredText, TextInput, TextInputPlacholder};
+use jackdaw_widgets::tree_view::{
     EntityCategory, TreeChildrenPopulated, TreeFocused, TreeIndex, TreeNode, TreeNodeExpanded,
     TreeRowChildren, TreeRowClicked, TreeRowContent,
     TreeRowDropped, TreeRowDroppedOnRoot, TreeRowInlineRename, TreeRowLabel, TreeRowRenamed,
@@ -25,7 +25,7 @@ use crate::{
     selection::{Selected, Selection},
     EditorEntity, EditorHidden,
 };
-use editor_feathers::dialog::{DialogActionEvent, DialogChildrenSlot};
+use jackdaw_feathers::dialog::{DialogActionEvent, DialogChildrenSlot};
 
 /// Stores the default name for the template save dialog.
 #[derive(Resource, Default)]
@@ -60,7 +60,7 @@ impl Plugin for HierarchyPlugin {
                     cancel_inline_rename,
                     handle_hierarchy_right_click.after(ContextMenuCloseSet),
                     populate_template_dialog,
-                    editor_feathers::tree_view::tree_keyboard_navigation,
+                    jackdaw_feathers::tree_view::tree_keyboard_navigation,
                 ),
             )
             .add_observer(on_root_entity_added)
@@ -877,7 +877,7 @@ fn on_context_menu_action(
                         .unwrap_or_else(|| "template".to_string());
                     world.resource_mut::<PendingTemplateDefaultName>().0 = default_name;
                 });
-                commands.trigger(editor_feathers::dialog::OpenDialogEvent::new(
+                commands.trigger(jackdaw_feathers::dialog::OpenDialogEvent::new(
                     "Save as Template",
                     "Save",
                 ));
@@ -1190,7 +1190,7 @@ fn on_template_dialog_action(
 
 /// Filter hierarchy tree rows based on the filter text input.
 fn apply_hierarchy_filter(
-    filter_input: Query<&editor_widgets::text_input::TextInput, (With<HierarchyFilter>, Changed<editor_widgets::text_input::TextInput>)>,
+    filter_input: Query<&jackdaw_widgets::text_input::TextInput, (With<HierarchyFilter>, Changed<jackdaw_widgets::text_input::TextInput>)>,
     tree_nodes: Query<(Entity, &TreeNode)>,
     names: Query<&Name>,
     parent_query: Query<&ChildOf>,

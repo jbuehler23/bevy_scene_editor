@@ -3,15 +3,15 @@ use crate::custom_properties::{CustomProperties, PropertyValue, SetCustomPropert
 
 use bevy::prelude::*;
 use bevy::ui_widgets::observe;
-use editor_feathers::{
+use jackdaw_feathers::{
     checkbox::{CheckboxCommitEvent, CheckboxProps, checkbox},
     color_picker::{ColorPickerCommitEvent, ColorPickerProps, color_picker},
     icons::Icon,
     numeric_input, text_input, tokens,
 };
-use editor_widgets::numeric_input::NumericValueChanged;
-use editor_widgets::text_input::{EnteredText, TextInput};
-use editor_feathers::combobox::{ComboBoxSelectedIndex, combobox_with_selected};
+use jackdaw_widgets::numeric_input::NumericValueChanged;
+use jackdaw_widgets::text_input::{EnteredText, TextInput};
+use jackdaw_feathers::combobox::{ComboBoxSelectedIndex, combobox_with_selected};
 
 use super::{
     AXIS_X_COLOR, AXIS_Y_COLOR, AXIS_Z_COLOR,

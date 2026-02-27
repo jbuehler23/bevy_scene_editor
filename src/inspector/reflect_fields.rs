@@ -9,14 +9,14 @@ use bevy::{
     reflect::{DynamicEnum, DynamicStruct, DynamicTuple, DynamicVariant, ReflectRef},
     ui_widgets::observe,
 };
-use editor_feathers::{
+use jackdaw_feathers::{
     checkbox::{CheckboxCommitEvent, CheckboxProps, CheckboxState, checkbox},
     color_picker::{ColorPickerCommitEvent, ColorPickerProps, color_picker},
     combobox::{ComboBoxChangeEvent, combobox_with_selected},
     list_view, numeric_input, text_input, tokens,
 };
-use editor_widgets::numeric_input::{NumericInput, NumericValueChanged};
-use editor_widgets::text_input::{EnteredText, TextInput};
+use jackdaw_widgets::numeric_input::{NumericInput, NumericValueChanged};
+use jackdaw_widgets::text_input::{EnteredText, TextInput};
 
 use super::{FieldBinding, MAX_REFLECT_DEPTH, AXIS_X_COLOR, AXIS_Y_COLOR, AXIS_Z_COLOR};
 

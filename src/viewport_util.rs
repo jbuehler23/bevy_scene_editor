@@ -33,6 +33,27 @@ pub(crate) fn window_to_viewport_cursor(
     }
 }
 
+/// Test whether a 2D point lies inside a convex or concave polygon (ray-casting algorithm).
+pub(crate) fn point_in_polygon_2d(point: Vec2, polygon: &[Vec2]) -> bool {
+    let n = polygon.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let pi = polygon[i];
+        let pj = polygon[j];
+        if ((pi.y > point.y) != (pj.y > point.y))
+            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 /// Distance from a point to a line segment.
 pub(crate) fn point_to_segment_dist(point: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;

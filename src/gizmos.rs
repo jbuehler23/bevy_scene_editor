@@ -1,4 +1,4 @@
-use bevy::{prelude::*, ui::UiGlobalTransform};
+use bevy::{prelude::*, ui::UiGlobalTransform, window::{CursorGrabMode, CursorOptions}};
 
 use crate::{
     commands::{CommandHistory, SetTransform},
@@ -107,26 +107,27 @@ fn handle_gizmo_mode_keys(
     mut space: ResMut<GizmoSpace>,
     drag_state: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
-    selection: Res<Selection>,
+    edit_mode: Res<crate::brush::EditMode>,
 ) {
-    // Don't switch modes while dragging or during modal ops
+    // Don't switch modes while dragging, during modal ops, or in brush edit mode
     if drag_state.active || modal.active.is_some() {
         return;
     }
-
-    let has_selection = selection.primary().is_some();
-
-    if keyboard.just_pressed(KeyCode::KeyW) {
-        *mode = GizmoMode::Translate;
+    if *edit_mode != crate::brush::EditMode::Object {
+        return;
     }
-    if keyboard.just_pressed(KeyCode::KeyE) {
+
+    // R = Rotate, T = Scale, Escape = reset to Translate
+    if keyboard.just_pressed(KeyCode::KeyR) {
         *mode = GizmoMode::Rotate;
     }
-    // R and S are reserved for modal ops when an entity is selected
-    if keyboard.just_pressed(KeyCode::KeyR) && !has_selection {
+    if keyboard.just_pressed(KeyCode::KeyT) {
         *mode = GizmoMode::Scale;
     }
-    // Toggle world/local space (skip during modal — X is axis constraint)
+    if keyboard.just_pressed(KeyCode::Escape) {
+        *mode = GizmoMode::Translate;
+    }
+    // Toggle world/local space
     if keyboard.just_pressed(KeyCode::KeyX) {
         *space = match *space {
             GizmoSpace::World => GizmoSpace::Local,
@@ -151,17 +152,21 @@ fn handle_gizmo_hover(
     modal: Res<ModalTransformState>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
-    walk_mode: Res<crate::viewport::WalkModeState>,
     draw_state: Res<crate::draw_brush::DrawBrushState>,
 ) {
     hover.hovered_axis = None;
 
-    if drag_state.active || modal.active.is_some() || walk_mode.active || draw_state.active.is_some() {
+    if drag_state.active || modal.active.is_some() || draw_state.active.is_some() {
         return;
     }
 
     // Don't show gizmo hover in brush edit mode
     if *edit_mode != crate::brush::EditMode::Object {
+        return;
+    }
+
+    // No hover detection in Translate mode (direct drag replaces gizmo)
+    if *mode == GizmoMode::Translate {
         return;
     }
 
@@ -232,6 +237,7 @@ fn handle_gizmo_drag(
     mut transforms: Query<(&GlobalTransform, &mut Transform), With<Selected>>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     windows: Query<&Window>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mode: Res<GizmoMode>,
@@ -242,14 +248,21 @@ fn handle_gizmo_drag(
     snap_settings: Res<SnapSettings>,
     modal: Res<ModalTransformState>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    (edit_mode, walk_mode, draw_state): (
+    (edit_mode, draw_state): (
         Res<crate::brush::EditMode>,
-        Res<crate::viewport::WalkModeState>,
         Res<crate::draw_brush::DrawBrushState>,
     ),
 ) {
-    // Suppress gizmo drag during modal operations, brush edit mode, walk mode, or draw mode
-    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object || walk_mode.active || draw_state.active.is_some() {
+    // Suppress gizmo drag during modal operations, brush edit mode, or draw mode
+    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object || draw_state.active.is_some() {
+        if drag_state.active {
+            drag_state.active = false;
+        }
+        return;
+    }
+
+    // No gizmo drag in Translate mode
+    if *mode == GizmoMode::Translate {
         if drag_state.active {
             drag_state.active = false;
         }
@@ -286,6 +299,10 @@ fn handle_gizmo_drag(
                 drag_state.start_transform = *transform;
                 drag_state.entity = Some(primary);
                 drag_state.accumulated_delta = 0.0;
+                // Confine cursor during drag
+                if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+                    cursor_opts.grab_mode = CursorGrabMode::Confined;
+                }
             }
         }
         return;
@@ -393,6 +410,10 @@ fn handle_gizmo_drag(
         drag_state.active = false;
         drag_state.axis = None;
         drag_state.entity = None;
+        // Release cursor confinement
+        if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::None;
+        }
     }
 }
 
@@ -410,10 +431,14 @@ fn draw_gizmos(
     drag_state: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
     edit_mode: Res<crate::brush::EditMode>,
-    walk_mode: Res<crate::viewport::WalkModeState>,
 ) {
-    // Hide gizmo during modal operations, brush edit mode, or walk mode
-    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object || walk_mode.active {
+    // Hide gizmo during modal operations or brush edit mode
+    if modal.active.is_some() || *edit_mode != crate::brush::EditMode::Object {
+        return;
+    }
+
+    // Don't draw in Translate mode (no gizmo)
+    if *mode == GizmoMode::Translate {
         return;
     }
 

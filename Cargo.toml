@@ -1,5 +1,5 @@
 [package]
-name = "bevy_scene_editor"
+name = "jackdaw"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,13 +8,14 @@ members = ["crates/*"]
 
 [dependencies]
 bevy.workspace = true
-bevy_jsn.workspace = true
-bevy_jsn_geometry.workspace = true
+jackdaw_jsn.workspace = true
+jackdaw_geometry.workspace = true
 bevy_notify.workspace = true
-bevy_panorbit_camera.workspace = true
 bevy_infinite_grid.workspace = true
-editor_feathers.workspace = true
-editor_widgets.workspace = true
+jackdaw_camera.workspace = true
+jackdaw_feathers.workspace = true
+jackdaw_widgets.workspace = true
+jackdaw_commands.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 avian3d.workspace = true
@@ -22,13 +23,14 @@ rfd.workspace = true
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug"] }
-bevy_jsn = { path = "crates/bevy_jsn" }
-bevy_jsn_geometry = { path = "crates/bevy_jsn_geometry" }
+jackdaw_jsn = { path = "crates/jackdaw_jsn" }
+jackdaw_geometry = { path = "crates/jackdaw_geometry" }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
-bevy_panorbit_camera = "0.34"
 bevy_infinite_grid = "0.18"
-editor_feathers = { path = "crates/editor_feathers" }
-editor_widgets = { path = "crates/editor_widgets" }
+jackdaw_camera = { path = "crates/jackdaw_camera" }
+jackdaw_feathers = { path = "crates/jackdaw_feathers" }
+jackdaw_widgets = { path = "crates/jackdaw_widgets" }
+jackdaw_commands = { path = "crates/jackdaw_commands" }
 serde = "1"
 lucide-icons = "0.563"
 serde_json = "1"

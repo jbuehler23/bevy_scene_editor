@@ -8,7 +8,7 @@ use bevy::{
     reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer},
     tasks::IoTaskPool,
 };
-use bevy_jsn::format::JsnEntity;
+use jackdaw_jsn::format::JsnEntity;
 use serde::de::DeserializeSeed;
 
 use crate::{
@@ -229,7 +229,7 @@ pub fn instantiate_template(world: &mut World, path: &str, position: Vec3) {
         .iter()
         .filter_map(|&e| {
             world
-                .get::<bevy_jsn::GltfSource>(e)
+                .get::<jackdaw_jsn::GltfSource>(e)
                 .map(|gs| (e, gs.path.clone(), gs.scene_index))
         })
         .collect();

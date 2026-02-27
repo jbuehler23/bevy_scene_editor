@@ -12,10 +12,10 @@ use bevy::prelude::*;
 use crate::commands::EditorCommand;
 
 // ---------------------------------------------------------------------------
-// Re-exports from bevy_jsn / bevy_jsn_geometry
+// Re-exports from jackdaw_jsn / jackdaw_jsn_geometry
 // ---------------------------------------------------------------------------
 
-pub use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
+pub use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 pub use self::geometry::{compute_brush_geometry, compute_face_tangent_axes};
 pub use self::csg::{brush_planes_to_world, brushes_intersect, subtract_brush, clean_degenerate_faces};
 pub use self::hull::HullFace;
@@ -25,7 +25,7 @@ pub(crate) use self::interaction::{
 };
 
 // ---------------------------------------------------------------------------
-// Editor-only data structures (not serialized / not in bevy_jsn)
+// Editor-only data structures (not serialized / not in jackdaw_jsn)
 // ---------------------------------------------------------------------------
 
 /// Cached computed geometry (NOT serialized, rebuilt from Brush).
@@ -68,12 +68,20 @@ pub struct BrushSelection {
     pub vertices: Vec<usize>,
     /// Selected edges as normalized (min, max) vertex index pairs.
     pub edges: Vec<(usize, usize)>,
+    /// True when face mode was entered via shift+click (temporary peek).
+    pub temporary_mode: bool,
 }
 
 /// Material palette for brush faces.
 #[derive(Resource, Default)]
 pub struct BrushMaterialPalette {
     pub materials: Vec<Handle<StandardMaterial>>,
+}
+
+/// Remembers the last texture applied via the texture browser, so new brushes inherit it.
+#[derive(Resource, Default)]
+pub struct LastUsedTexture {
+    pub texture_path: Option<String>,
 }
 
 /// Cached texture materials, keyed by asset-relative path.
@@ -135,6 +143,7 @@ impl Plugin for BrushPlugin {
             .init_resource::<VertexDragState>()
             .init_resource::<EdgeDragState>()
             .init_resource::<ClipState>()
+            .init_resource::<LastUsedTexture>()
             .add_systems(Startup, mesh::setup_default_materials)
             .add_systems(
                 Update,
@@ -143,12 +152,9 @@ impl Plugin for BrushPlugin {
                     mesh::ensure_texture_materials,
                     mesh::set_texture_repeat_mode,
                     mesh::regenerate_brush_meshes,
-                    interaction::brush_face_select,
-                    interaction::brush_vertex_select,
-                    interaction::brush_edge_select,
-                    interaction::handle_face_drag,
-                    interaction::handle_vertex_drag,
-                    interaction::handle_edge_drag,
+                    interaction::brush_face_interact,
+                    interaction::brush_vertex_interact,
+                    interaction::brush_edge_interact,
                     interaction::handle_brush_delete,
                     interaction::handle_clip_mode,
                     gizmo_overlay::draw_brush_edit_gizmos,

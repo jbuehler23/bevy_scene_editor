@@ -9,12 +9,12 @@ use crate::{
     commands::CommandHistory,
     selection::Selection,
     viewport::SceneViewport,
-    viewport_util::{point_to_segment_dist, window_to_viewport_cursor},
+    viewport_util::{point_in_polygon_2d, point_to_segment_dist, window_to_viewport_cursor},
     EditorEntity,
 };
 
-use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
-use bevy_jsn_geometry::{compute_face_tangent_axes, point_inside_all_planes, EPSILON};
+use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
+use jackdaw_geometry::{compute_face_tangent_axes, point_inside_all_planes, EPSILON};
 use super::{
     BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
     SetBrush,
@@ -26,67 +26,20 @@ use super::hull::rebuild_brush_from_vertices;
 // ---------------------------------------------------------------------------
 
 pub(super) fn handle_edit_mode_keys(
-    keyboard: Res<ButtonInput<KeyCode>>,
     input_focus: Res<InputFocus>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     selection: Res<Selection>,
-    brushes: Query<(), With<Brush>>,
     mut edit_mode: ResMut<EditMode>,
     mut brush_selection: ResMut<BrushSelection>,
     modal: Res<crate::modal_transform::ModalTransformState>,
+    brushes: Query<(), With<Brush>>,
+    face_drag: Res<BrushDragState>,
+    vertex_drag: Res<VertexDragState>,
+    edge_drag: Res<EdgeDragState>,
+    clip_state: Res<ClipState>,
 ) {
     if input_focus.0.is_some() || modal.active.is_some() {
         return;
-    }
-
-    // Backtick (`) toggles in/out of brush edit mode
-    if keyboard.just_pressed(KeyCode::Backquote) {
-        match *edit_mode {
-            EditMode::Object => {
-                // Enter brush edit mode if a brush is selected
-                if let Some(primary) = selection.primary() {
-                    if brushes.contains(primary) {
-                        *edit_mode = EditMode::BrushEdit(BrushEditMode::Face);
-                        brush_selection.entity = Some(primary);
-                        brush_selection.faces.clear();
-                        brush_selection.vertices.clear();
-                        brush_selection.edges.clear();
-                    }
-                }
-            }
-            EditMode::BrushEdit(_) => {
-                *edit_mode = EditMode::Object;
-                brush_selection.entity = None;
-                brush_selection.faces.clear();
-                brush_selection.vertices.clear();
-                brush_selection.edges.clear();
-            }
-        }
-        return;
-    }
-
-    // 1/2/3 switch sub-modes within brush edit mode
-    if let EditMode::BrushEdit(_) = *edit_mode {
-        if keyboard.just_pressed(KeyCode::Digit1) {
-            *edit_mode = EditMode::BrushEdit(BrushEditMode::Vertex);
-            brush_selection.faces.clear();
-            brush_selection.vertices.clear();
-            brush_selection.edges.clear();
-        } else if keyboard.just_pressed(KeyCode::Digit2) {
-            *edit_mode = EditMode::BrushEdit(BrushEditMode::Edge);
-            brush_selection.faces.clear();
-            brush_selection.vertices.clear();
-            brush_selection.edges.clear();
-        } else if keyboard.just_pressed(KeyCode::Digit3) {
-            *edit_mode = EditMode::BrushEdit(BrushEditMode::Face);
-            brush_selection.faces.clear();
-            brush_selection.vertices.clear();
-            brush_selection.edges.clear();
-        } else if keyboard.just_pressed(KeyCode::Digit4) {
-            *edit_mode = EditMode::BrushEdit(BrushEditMode::Clip);
-            brush_selection.faces.clear();
-            brush_selection.vertices.clear();
-            brush_selection.edges.clear();
-        }
     }
 
     // Exit brush edit mode if the brush entity gets deselected
@@ -101,14 +54,87 @@ pub(super) fn handle_edit_mode_keys(
             }
         }
     }
+
+    // Don't switch modes while any drag is active
+    if face_drag.active || vertex_drag.active || edge_drag.active {
+        return;
+    }
+    if face_drag.pending.is_some() || vertex_drag.pending.is_some() || edge_drag.pending.is_some() {
+        return;
+    }
+
+    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+
+    // 1/2/3/4 toggle brush sub-element modes (skip if Ctrl held for bookmark save)
+    if !ctrl {
+        let pressed_mode = if keyboard.just_pressed(KeyCode::Digit1) {
+            Some(BrushEditMode::Vertex)
+        } else if keyboard.just_pressed(KeyCode::Digit2) {
+            Some(BrushEditMode::Edge)
+        } else if keyboard.just_pressed(KeyCode::Digit3) {
+            Some(BrushEditMode::Face)
+        } else if keyboard.just_pressed(KeyCode::Digit4) {
+            Some(BrushEditMode::Clip)
+        } else {
+            None
+        };
+
+        if let Some(target_mode) = pressed_mode {
+            if let EditMode::BrushEdit(current) = *edit_mode {
+                if current == target_mode {
+                    // Same key again: toggle off to Object
+                    *edit_mode = EditMode::Object;
+                    brush_selection.entity = None;
+                    brush_selection.faces.clear();
+                    brush_selection.vertices.clear();
+                    brush_selection.edges.clear();
+                } else {
+                    // Switch sub-mode, clear sub-element selections
+                    *edit_mode = EditMode::BrushEdit(target_mode);
+                    brush_selection.faces.clear();
+                    brush_selection.vertices.clear();
+                    brush_selection.edges.clear();
+                    brush_selection.temporary_mode = false;
+                }
+            } else {
+                // From Object mode: enter edit on primary if it's a brush
+                if let Some(entity) = selection.primary().filter(|&e| brushes.contains(e)) {
+                    *edit_mode = EditMode::BrushEdit(target_mode);
+                    brush_selection.entity = Some(entity);
+                    brush_selection.faces.clear();
+                    brush_selection.vertices.clear();
+                    brush_selection.edges.clear();
+                    brush_selection.temporary_mode = false;
+                }
+            }
+            return;
+        }
+    }
+
+    // Escape: exit to Object (unless Clip mode with pending points)
+    if keyboard.just_pressed(KeyCode::Escape) {
+        if let EditMode::BrushEdit(BrushEditMode::Clip) = *edit_mode {
+            if !clip_state.points.is_empty() {
+                // Let clip mode's own Escape handler clear the points first
+                return;
+            }
+        }
+        if matches!(*edit_mode, EditMode::BrushEdit(_)) {
+            *edit_mode = EditMode::Object;
+            brush_selection.entity = None;
+            brush_selection.faces.clear();
+            brush_selection.vertices.clear();
+            brush_selection.edges.clear();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Face selection (in face edit mode, click on face child entities)
+// Face interact (unified select + click-drag)
 // ---------------------------------------------------------------------------
 
-pub(super) fn brush_face_select(
-    edit_mode: Res<EditMode>,
+pub(super) fn brush_face_interact(
+    mut edit_mode: ResMut<EditMode>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
@@ -117,11 +143,39 @@ pub(super) fn brush_face_select(
     face_entities: Query<(Entity, &super::BrushFaceEntity, &GlobalTransform)>,
     mut brush_selection: ResMut<BrushSelection>,
     brush_caches: Query<&BrushMeshCache>,
+    selection: Res<Selection>,
+    brushes_check: Query<(), With<Brush>>,
+    mut brushes: Query<(&mut Brush, &GlobalTransform)>,
+    mut drag_state: ResMut<BrushDragState>,
+    input_focus: Res<InputFocus>,
+    mut history: ResMut<CommandHistory>,
 ) {
-    let EditMode::BrushEdit(BrushEditMode::Face) = *edit_mode else {
-        return;
-    };
-    if !mouse.just_pressed(MouseButton::Left) {
+    let in_face_edit = matches!(*edit_mode, EditMode::BrushEdit(BrushEditMode::Face));
+
+    // Temporary face mode: exit when shift is released and no drag is active
+    if in_face_edit && brush_selection.temporary_mode {
+        let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        if !shift && !drag_state.active && drag_state.pending.is_none() {
+            *edit_mode = EditMode::Object;
+            brush_selection.entity = None;
+            brush_selection.faces.clear();
+            brush_selection.vertices.clear();
+            brush_selection.edges.clear();
+            brush_selection.temporary_mode = false;
+            return;
+        }
+    }
+
+    if !in_face_edit && drag_state.pending.is_none() && !drag_state.active {
+        // Not in face mode — only handle Shift+click to enter face edit
+        let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        if !shift || !mouse.just_pressed(MouseButton::Left) {
+            return;
+        }
+        // Fall through to face picking below
+    }
+
+    if input_focus.0.is_some() && !in_face_edit {
         return;
     }
 
@@ -138,18 +192,132 @@ pub(super) fn brush_face_select(
         return;
     };
 
-    let Some(brush_entity) = brush_selection.entity else {
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+
+    // Cancel active drag on Escape or right-click
+    if drag_state.active {
+        if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
+            if let Some(brush_entity) = brush_selection.entity {
+                if let Some(ref start) = drag_state.start_brush {
+                    if let Ok((mut brush, _)) = brushes.get_mut(brush_entity) {
+                        *brush = start.clone();
+                    }
+                }
+            }
+            drag_state.active = false;
+            drag_state.pending = None;
+            return;
+        }
+    }
+
+    // Release: commit drag
+    if mouse.just_released(MouseButton::Left) {
+        if drag_state.active {
+            if let Some(brush_entity) = brush_selection.entity {
+                if let Some(ref start) = drag_state.start_brush {
+                    if let Ok((brush, _)) = brushes.get(brush_entity) {
+                        let cmd = SetBrush {
+                            entity: brush_entity,
+                            old: start.clone(),
+                            new: brush.clone(),
+                            label: "Move brush face".to_string(),
+                        };
+                        history.undo_stack.push(Box::new(cmd));
+                        history.redo_stack.clear();
+                    }
+                }
+            }
+            drag_state.active = false;
+        }
+        drag_state.pending = None;
+        return;
+    }
+
+    // Pending → active promotion (5px threshold)
+    if let Some(ref pending) = drag_state.pending {
+        if mouse.pressed(MouseButton::Left) && !drag_state.active {
+            let dist = (cursor_pos - pending.click_pos).length();
+            if dist > 5.0 {
+                // Promote to active drag
+                if let Some(brush_entity) = brush_selection.entity {
+                    if let Ok((brush, _)) = brushes.get(brush_entity) {
+                        drag_state.active = true;
+                        drag_state.start_brush = Some(brush.clone());
+                        drag_state.start_cursor = viewport_cursor;
+                        // Use the first selected face's normal
+                        if let Some(&face_idx) = brush_selection.faces.first() {
+                            if face_idx < brush.faces.len() {
+                                drag_state.drag_face_normal = brush.faces[face_idx].plane.normal;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Continue active drag — adjust face plane distance
+    if drag_state.active {
+        let Some(brush_entity) = brush_selection.entity else {
+            drag_state.active = false;
+            return;
+        };
+        let Ok((mut brush, brush_global)) = brushes.get_mut(brush_entity) else {
+            drag_state.active = false;
+            return;
+        };
+        let Some(ref start) = drag_state.start_brush else {
+            drag_state.active = false;
+            return;
+        };
+
+        let brush_pos = brush_global.translation();
+        let Ok(origin_screen) = camera.world_to_viewport(cam_tf, brush_pos) else {
+            return;
+        };
+        let Ok(normal_screen) = camera.world_to_viewport(cam_tf, brush_pos + drag_state.drag_face_normal) else {
+            return;
+        };
+        let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
+        let mouse_delta = viewport_cursor - drag_state.start_cursor;
+        let projected = mouse_delta.dot(screen_dir);
+
+        let cam_dist = (cam_tf.translation() - brush_pos).length();
+        let drag_amount = projected * cam_dist * 0.003;
+
+        for &face_idx in &brush_selection.faces {
+            if face_idx < start.faces.len() && face_idx < brush.faces.len() {
+                brush.faces[face_idx].plane.distance = start.faces[face_idx].plane.distance + drag_amount;
+            }
+        }
+        return;
+    }
+
+    // Mouse press: pick face and start pending drag
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    // Determine which brush entity to work with
+    let brush_entity = if in_face_edit {
+        brush_selection.entity
+    } else {
+        selection.primary().filter(|&e| brushes_check.contains(e))
+    };
+    let Some(brush_entity) = brush_entity else {
         return;
     };
 
-    // Raycast: find face entity closest to click in screen space
-    // We check centroids of face polygons projected to screen
     let Ok(cache) = brush_caches.get(brush_entity) else {
         return;
     };
 
+    // Find face whose screen-space polygon contains the cursor.
+    // When multiple faces overlap (e.g. back-face behind front-face),
+    // pick the one whose centroid is closest to the camera.
     let mut best_face = None;
-    let mut best_dist = 30.0_f32;
+    let mut best_depth = f32::MAX;
 
     for (_, face_ent, face_global) in &face_entities {
         if face_ent.brush_entity != brush_entity {
@@ -157,28 +325,50 @@ pub(super) fn brush_face_select(
         }
         let face_idx = face_ent.face_index;
         let polygon = &cache.face_polygons[face_idx];
-        if polygon.is_empty() {
+        if polygon.len() < 3 {
             continue;
         }
 
-        // Compute face centroid in world space
-        let brush_tf = face_global; // face children have identity local transform
-        let centroid: Vec3 = polygon.iter().map(|&vi| cache.vertices[vi]).sum::<Vec3>()
-            / polygon.len() as f32;
-        let world_centroid = brush_tf.transform_point(centroid);
+        let brush_tf = face_global;
 
-        if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, world_centroid) {
-            let dist = (screen_pos - viewport_cursor).length();
-            if dist < best_dist {
-                best_dist = dist;
+        // Project face polygon vertices to screen space
+        let screen_verts: Vec<Vec2> = polygon
+            .iter()
+            .filter_map(|&vi| {
+                let world = brush_tf.transform_point(cache.vertices[vi]);
+                camera.world_to_viewport(cam_tf, world).ok()
+            })
+            .collect();
+        if screen_verts.len() < 3 {
+            continue;
+        }
+
+        if point_in_polygon_2d(viewport_cursor, &screen_verts) {
+            // Use depth of centroid to resolve overlapping faces
+            let centroid: Vec3 = polygon.iter().map(|&vi| cache.vertices[vi]).sum::<Vec3>()
+                / polygon.len() as f32;
+            let world_centroid = brush_tf.transform_point(centroid);
+            let depth = (cam_tf.translation() - world_centroid).length_squared();
+            if depth < best_depth {
+                best_depth = depth;
                 best_face = Some(face_idx);
             }
         }
     }
 
-    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     if let Some(face_idx) = best_face {
-        if ctrl {
+        // Auto-enter face edit mode if not already in it
+        if !in_face_edit {
+            *edit_mode = EditMode::BrushEdit(BrushEditMode::Face);
+            brush_selection.entity = Some(brush_entity);
+            brush_selection.faces.clear();
+            brush_selection.vertices.clear();
+            brush_selection.edges.clear();
+            brush_selection.temporary_mode = true;
+        }
+
+        if ctrl && shift {
+            // Ctrl+Shift+click: toggle multi-select, no drag
             if let Some(pos) = brush_selection.faces.iter().position(|&f| f == face_idx) {
                 brush_selection.faces.remove(pos);
             } else {
@@ -186,17 +376,20 @@ pub(super) fn brush_face_select(
             }
         } else {
             brush_selection.faces = vec![face_idx];
+            // Record pending drag
+            drag_state.pending = Some(PendingSubDrag { click_pos: cursor_pos });
         }
-    } else if !ctrl {
+    } else if in_face_edit && !ctrl {
+        // Click away from any face: clear selection
         brush_selection.faces.clear();
     }
 }
 
 // ---------------------------------------------------------------------------
-// Vertex selection
+// Vertex interact (unified select + click-drag)
 // ---------------------------------------------------------------------------
 
-pub(super) fn brush_vertex_select(
+pub(super) fn brush_vertex_interact(
     edit_mode: Res<EditMode>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -206,11 +399,17 @@ pub(super) fn brush_vertex_select(
     brush_transforms: Query<&GlobalTransform>,
     mut brush_selection: ResMut<BrushSelection>,
     brush_caches: Query<&BrushMeshCache>,
+    mut brushes: Query<&mut Brush>,
+    mut drag_state: ResMut<VertexDragState>,
+    input_focus: Res<InputFocus>,
+    mut history: ResMut<CommandHistory>,
 ) {
     let EditMode::BrushEdit(BrushEditMode::Vertex) = *edit_mode else {
+        drag_state.active = false;
+        drag_state.pending = None;
         return;
     };
-    if !mouse.just_pressed(MouseButton::Left) {
+    if input_focus.0.is_some() {
         return;
     }
 
@@ -230,6 +429,153 @@ pub(super) fn brush_vertex_select(
     let Some(brush_entity) = brush_selection.entity else {
         return;
     };
+
+    // Axis constraint toggle during active drag
+    if drag_state.active {
+        if keyboard.just_pressed(KeyCode::KeyX) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisX {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisX
+            };
+        } else if keyboard.just_pressed(KeyCode::KeyY) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisY {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisY
+            };
+        } else if keyboard.just_pressed(KeyCode::KeyZ) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisZ {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisZ
+            };
+        }
+    }
+
+    // Cancel active drag on Escape or right-click
+    if drag_state.active {
+        if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
+            if let Some(ref start) = drag_state.start_brush {
+                if let Ok(mut brush) = brushes.get_mut(brush_entity) {
+                    *brush = start.clone();
+                }
+            }
+            drag_state.active = false;
+            drag_state.pending = None;
+            drag_state.constraint = VertexDragConstraint::Free;
+            drag_state.split_vertex = None;
+            return;
+        }
+    }
+
+    // Release: commit drag
+    if mouse.just_released(MouseButton::Left) {
+        if drag_state.active {
+            if let Some(ref start) = drag_state.start_brush {
+                if let Ok(brush) = brushes.get(brush_entity) {
+                    let label = if drag_state.split_vertex.is_some() {
+                        "Split brush vertex"
+                    } else {
+                        "Move brush vertex"
+                    };
+                    let cmd = SetBrush {
+                        entity: brush_entity,
+                        old: start.clone(),
+                        new: brush.clone(),
+                        label: label.to_string(),
+                    };
+                    history.undo_stack.push(Box::new(cmd));
+                    history.redo_stack.clear();
+                }
+            }
+            drag_state.active = false;
+            drag_state.constraint = VertexDragConstraint::Free;
+        }
+        drag_state.pending = None;
+        drag_state.split_vertex = None;
+        return;
+    }
+
+    // Pending → active promotion (5px threshold)
+    if let Some(ref pending) = drag_state.pending {
+        if mouse.pressed(MouseButton::Left) && !drag_state.active {
+            let dist = (cursor_pos - pending.click_pos).length();
+            if dist > 5.0 {
+                if let Ok(cache) = brush_caches.get(brush_entity) {
+                    if let Ok(brush) = brushes.get(brush_entity) {
+                        drag_state.active = true;
+                        drag_state.constraint = VertexDragConstraint::Free;
+                        drag_state.start_brush = Some(brush.clone());
+                        drag_state.start_cursor = viewport_cursor;
+
+                        // Build start vertices, possibly with split vertex appended
+                        let mut all_verts = cache.vertices.clone();
+                        if let Some(split_pos) = drag_state.split_vertex {
+                            all_verts.push(split_pos);
+                        }
+
+                        drag_state.start_vertex_positions = brush_selection
+                            .vertices
+                            .iter()
+                            .map(|&vi| all_verts.get(vi).copied().unwrap_or(Vec3::ZERO))
+                            .collect();
+                        drag_state.start_all_vertices = all_verts;
+                        drag_state.start_face_polygons = cache.face_polygons.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    // Continue active drag
+    if drag_state.active {
+        let Ok(mut brush) = brushes.get_mut(brush_entity) else {
+            drag_state.active = false;
+            return;
+        };
+        let Some(ref start) = drag_state.start_brush else {
+            drag_state.active = false;
+            return;
+        };
+        let Ok(brush_global) = brush_transforms.get(brush_entity) else {
+            return;
+        };
+
+        let mouse_delta = viewport_cursor - drag_state.start_cursor;
+        let Some(local_offset) = compute_brush_drag_offset(
+            drag_state.constraint,
+            mouse_delta,
+            cam_tf,
+            camera,
+            brush_global,
+        ) else {
+            return;
+        };
+
+        let mut new_verts = drag_state.start_all_vertices.clone();
+        for (sel_idx, &vert_idx) in brush_selection.vertices.iter().enumerate() {
+            if sel_idx < drag_state.start_vertex_positions.len() && vert_idx < new_verts.len() {
+                new_verts[vert_idx] = drag_state.start_vertex_positions[sel_idx] + local_offset;
+            }
+        }
+
+        if let Some(new_brush) = rebuild_brush_from_vertices(
+            start,
+            &drag_state.start_all_vertices,
+            &drag_state.start_face_polygons,
+            &new_verts,
+        ) {
+            *brush = new_brush;
+        }
+        return;
+    }
+
+    // Mouse press: pick vertex and start pending drag
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+
     let Ok(cache) = brush_caches.get(brush_entity) else {
         return;
     };
@@ -237,6 +583,73 @@ pub(super) fn brush_vertex_select(
         return;
     };
 
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+
+    // Shift+click: pick edge midpoint or face center for vertex split
+    if shift && !ctrl {
+        // Collect unique edges from face polygons
+        let mut unique_edges: Vec<(usize, usize)> = Vec::new();
+        for polygon in &cache.face_polygons {
+            if polygon.len() < 2 {
+                continue;
+            }
+            for i in 0..polygon.len() {
+                let a = polygon[i];
+                let b = polygon[(i + 1) % polygon.len()];
+                let edge = (a.min(b), a.max(b));
+                if !unique_edges.contains(&edge) {
+                    unique_edges.push(edge);
+                }
+            }
+        }
+
+        let mut best_split: Option<Vec3> = None;
+        let mut best_dist = 20.0_f32;
+
+        // Try edge midpoints first
+        for &(a, b) in &unique_edges {
+            let midpoint = (cache.vertices[a] + cache.vertices[b]) * 0.5;
+            let world_pos = brush_global.transform_point(midpoint);
+            if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, world_pos) {
+                let dist = (screen_pos - viewport_cursor).length();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_split = Some(midpoint);
+                }
+            }
+        }
+
+        // Fallback: face centers
+        if best_split.is_none() {
+            best_dist = 20.0;
+            for polygon in &cache.face_polygons {
+                if polygon.len() < 3 {
+                    continue;
+                }
+                let centroid: Vec3 = polygon.iter().map(|&vi| cache.vertices[vi]).sum::<Vec3>()
+                    / polygon.len() as f32;
+                let world_pos = brush_global.transform_point(centroid);
+                if let Ok(screen_pos) = camera.world_to_viewport(cam_tf, world_pos) {
+                    let dist = (screen_pos - viewport_cursor).length();
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_split = Some(centroid);
+                    }
+                }
+            }
+        }
+
+        if let Some(split_pos) = best_split {
+            let new_idx = cache.vertices.len();
+            brush_selection.vertices = vec![new_idx];
+            drag_state.split_vertex = Some(split_pos);
+            drag_state.pending = Some(PendingSubDrag { click_pos: cursor_pos });
+        }
+        return;
+    }
+
+    // Normal vertex picking
     let mut best_vert = None;
     let mut best_dist = 20.0_f32;
 
@@ -251,9 +664,9 @@ pub(super) fn brush_vertex_select(
         }
     }
 
-    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     if let Some(vi) = best_vert {
         if ctrl {
+            // Ctrl+click: toggle multi-select, no drag
             if let Some(pos) = brush_selection.vertices.iter().position(|&v| v == vi) {
                 brush_selection.vertices.remove(pos);
             } else {
@@ -261,6 +674,8 @@ pub(super) fn brush_vertex_select(
             }
         } else {
             brush_selection.vertices = vec![vi];
+            // Record pending drag
+            drag_state.pending = Some(PendingSubDrag { click_pos: cursor_pos });
         }
     } else if !ctrl {
         brush_selection.vertices.clear();
@@ -268,10 +683,10 @@ pub(super) fn brush_vertex_select(
 }
 
 // ---------------------------------------------------------------------------
-// Edge selection
+// Edge interact (unified select + click-drag)
 // ---------------------------------------------------------------------------
 
-pub(super) fn brush_edge_select(
+pub(super) fn brush_edge_interact(
     edit_mode: Res<EditMode>,
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -281,11 +696,17 @@ pub(super) fn brush_edge_select(
     brush_transforms: Query<&GlobalTransform>,
     mut brush_selection: ResMut<BrushSelection>,
     brush_caches: Query<&BrushMeshCache>,
+    mut brushes: Query<&mut Brush>,
+    mut drag_state: ResMut<EdgeDragState>,
+    input_focus: Res<InputFocus>,
+    mut history: ResMut<CommandHistory>,
 ) {
     let EditMode::BrushEdit(BrushEditMode::Edge) = *edit_mode else {
+        drag_state.active = false;
+        drag_state.pending = None;
         return;
     };
-    if !mouse.just_pressed(MouseButton::Left) {
+    if input_focus.0.is_some() {
         return;
     }
 
@@ -305,6 +726,148 @@ pub(super) fn brush_edge_select(
     let Some(brush_entity) = brush_selection.entity else {
         return;
     };
+
+    // Axis constraint toggle during active drag
+    if drag_state.active {
+        if keyboard.just_pressed(KeyCode::KeyX) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisX {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisX
+            };
+        } else if keyboard.just_pressed(KeyCode::KeyY) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisY {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisY
+            };
+        } else if keyboard.just_pressed(KeyCode::KeyZ) {
+            drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisZ {
+                VertexDragConstraint::Free
+            } else {
+                VertexDragConstraint::AxisZ
+            };
+        }
+    }
+
+    // Cancel active drag on Escape or right-click
+    if drag_state.active {
+        if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
+            if let Some(ref start) = drag_state.start_brush {
+                if let Ok(mut brush) = brushes.get_mut(brush_entity) {
+                    *brush = start.clone();
+                }
+            }
+            drag_state.active = false;
+            drag_state.pending = None;
+            drag_state.constraint = VertexDragConstraint::Free;
+            return;
+        }
+    }
+
+    // Release: commit drag
+    if mouse.just_released(MouseButton::Left) {
+        if drag_state.active {
+            if let Some(ref start) = drag_state.start_brush {
+                if let Ok(brush) = brushes.get(brush_entity) {
+                    let cmd = SetBrush {
+                        entity: brush_entity,
+                        old: start.clone(),
+                        new: brush.clone(),
+                        label: "Move brush edge".to_string(),
+                    };
+                    history.undo_stack.push(Box::new(cmd));
+                    history.redo_stack.clear();
+                }
+            }
+            drag_state.active = false;
+            drag_state.constraint = VertexDragConstraint::Free;
+        }
+        drag_state.pending = None;
+        return;
+    }
+
+    // Pending → active promotion (5px threshold)
+    if let Some(ref pending) = drag_state.pending {
+        if mouse.pressed(MouseButton::Left) && !drag_state.active {
+            let dist = (cursor_pos - pending.click_pos).length();
+            if dist > 5.0 {
+                if let Ok(cache) = brush_caches.get(brush_entity) {
+                    if let Ok(brush) = brushes.get(brush_entity) {
+                        drag_state.active = true;
+                        drag_state.constraint = VertexDragConstraint::Free;
+                        drag_state.start_brush = Some(brush.clone());
+                        drag_state.start_cursor = viewport_cursor;
+                        drag_state.start_all_vertices = cache.vertices.clone();
+                        drag_state.start_face_polygons = cache.face_polygons.clone();
+
+                        let mut seen = HashSet::new();
+                        let mut edge_verts = Vec::new();
+                        for &(a, b) in &brush_selection.edges {
+                            if seen.insert(a) {
+                                let pos = cache.vertices.get(a).copied().unwrap_or(Vec3::ZERO);
+                                edge_verts.push((a, pos));
+                            }
+                            if seen.insert(b) {
+                                let pos = cache.vertices.get(b).copied().unwrap_or(Vec3::ZERO);
+                                edge_verts.push((b, pos));
+                            }
+                        }
+                        drag_state.start_edge_vertices = edge_verts;
+                    }
+                }
+            }
+        }
+    }
+
+    // Continue active drag
+    if drag_state.active {
+        let Ok(mut brush) = brushes.get_mut(brush_entity) else {
+            drag_state.active = false;
+            return;
+        };
+        let Some(ref start) = drag_state.start_brush else {
+            drag_state.active = false;
+            return;
+        };
+        let Ok(brush_global) = brush_transforms.get(brush_entity) else {
+            return;
+        };
+
+        let mouse_delta = viewport_cursor - drag_state.start_cursor;
+        let Some(local_offset) = compute_brush_drag_offset(
+            drag_state.constraint,
+            mouse_delta,
+            cam_tf,
+            camera,
+            brush_global,
+        ) else {
+            return;
+        };
+
+        let mut new_verts = drag_state.start_all_vertices.clone();
+        for &(vi, start_pos) in &drag_state.start_edge_vertices {
+            if vi < new_verts.len() {
+                new_verts[vi] = start_pos + local_offset;
+            }
+        }
+
+        if let Some(new_brush) = rebuild_brush_from_vertices(
+            start,
+            &drag_state.start_all_vertices,
+            &drag_state.start_face_polygons,
+            &new_verts,
+        ) {
+            *brush = new_brush;
+        }
+        return;
+    }
+
+    // Mouse press: pick edge and start pending drag
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+
     let Ok(cache) = brush_caches.get(brush_entity) else {
         return;
     };
@@ -328,7 +891,6 @@ pub(super) fn brush_edge_select(
         }
     }
 
-    // Find nearest edge in screen space
     let mut best_edge = None;
     let mut best_dist = 20.0_f32;
 
@@ -351,6 +913,7 @@ pub(super) fn brush_edge_select(
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     if let Some(edge) = best_edge {
         if ctrl {
+            // Ctrl+click: toggle multi-select, no drag
             if let Some(pos) = brush_selection.edges.iter().position(|e| *e == edge) {
                 brush_selection.edges.remove(pos);
             } else {
@@ -358,141 +921,29 @@ pub(super) fn brush_edge_select(
             }
         } else {
             brush_selection.edges = vec![edge];
+            // Record pending drag
+            drag_state.pending = Some(PendingSubDrag { click_pos: cursor_pos });
         }
     } else if !ctrl {
         brush_selection.edges.clear();
     }
 }
 
-// ---------------------------------------------------------------------------
-// Face drag (G key moves selected face along its normal)
-// ---------------------------------------------------------------------------
+pub(crate) struct PendingSubDrag {
+    pub click_pos: Vec2,
+}
 
 #[derive(Resource, Default)]
 pub(crate) struct BrushDragState {
+    pub pending: Option<PendingSubDrag>,
     pub active: bool,
     start_brush: Option<Brush>,
     start_cursor: Vec2,
     drag_face_normal: Vec3,
 }
 
-pub(super) fn handle_face_drag(
-    edit_mode: Res<EditMode>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
-    brush_selection: Res<BrushSelection>,
-    mut brushes: Query<(&mut Brush, &GlobalTransform)>,
-    mut drag_state: ResMut<BrushDragState>,
-    input_focus: Res<InputFocus>,
-    mut history: ResMut<CommandHistory>,
-) {
-    let EditMode::BrushEdit(BrushEditMode::Face) = *edit_mode else {
-        drag_state.active = false;
-        return;
-    };
-
-    if input_focus.0.is_some() {
-        return;
-    }
-
-    let Some(brush_entity) = brush_selection.entity else {
-        return;
-    };
-    let Ok((mut brush, brush_global)) = brushes.get_mut(brush_entity) else {
-        return;
-    };
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
-        return;
-    };
-
-    // Start drag on G or E (extrude face = same as face move, plane system extends)
-    if (keyboard.just_pressed(KeyCode::KeyG) || keyboard.just_pressed(KeyCode::KeyE))
-        && !drag_state.active
-        && !brush_selection.faces.is_empty()
-    {
-        drag_state.active = true;
-        drag_state.start_brush = Some(brush.clone());
-        drag_state.start_cursor = viewport_cursor;
-        // Use the first selected face's normal
-        let face_idx = brush_selection.faces[0];
-        drag_state.drag_face_normal = brush.faces[face_idx].plane.normal;
-        return;
-    }
-
-    if !drag_state.active {
-        return;
-    }
-
-    // Cancel on Escape or right-click
-    if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
-        if let Some(ref start) = drag_state.start_brush {
-            *brush = start.clone();
-        }
-        drag_state.active = false;
-        return;
-    }
-
-    // Confirm on left-click or Enter
-    if mouse.just_pressed(MouseButton::Left) || keyboard.just_pressed(KeyCode::Enter) {
-        if let Some(ref start) = drag_state.start_brush {
-            let cmd = SetBrush {
-                entity: brush_entity,
-                old: start.clone(),
-                new: brush.clone(),
-                label: "Move brush face".to_string(),
-            };
-            history.undo_stack.push(Box::new(cmd));
-            history.redo_stack.clear();
-        }
-        drag_state.active = false;
-        return;
-    }
-
-    // Continue drag — adjust face plane distance based on mouse movement
-    let Some(ref start) = drag_state.start_brush else {
-        drag_state.active = false;
-        return;
-    };
-
-    // Project the face normal to screen space to determine drag direction
-    let brush_pos = brush_global.translation();
-    let Ok(origin_screen) = camera.world_to_viewport(cam_tf, brush_pos) else {
-        return;
-    };
-    let Ok(normal_screen) = camera.world_to_viewport(cam_tf, brush_pos + drag_state.drag_face_normal) else {
-        return;
-    };
-    let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
-    let mouse_delta = viewport_cursor - drag_state.start_cursor;
-    let projected = mouse_delta.dot(screen_dir);
-
-    // Scale by camera distance
-    let cam_dist = (cam_tf.translation() - brush_pos).length();
-    let drag_amount = projected * cam_dist * 0.003;
-
-    // Apply to all selected faces
-    for &face_idx in &brush_selection.faces {
-        if face_idx < start.faces.len() && face_idx < brush.faces.len() {
-            brush.faces[face_idx].plane.distance = start.faces[face_idx].plane.distance + drag_amount;
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Vertex drag (G key moves selected vertices)
+// Drag types (kept above shared helper)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -506,6 +957,7 @@ pub(crate) enum VertexDragConstraint {
 
 #[derive(Resource, Default)]
 pub(crate) struct VertexDragState {
+    pub pending: Option<PendingSubDrag>,
     pub active: bool,
     pub constraint: VertexDragConstraint,
     start_brush: Option<Brush>,
@@ -515,161 +967,8 @@ pub(crate) struct VertexDragState {
     start_all_vertices: Vec<Vec3>,
     /// Per-face polygon indices at drag start (for hull rebuild).
     start_face_polygons: Vec<Vec<usize>>,
-}
-
-pub(super) fn handle_vertex_drag(
-    edit_mode: Res<EditMode>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
-    brush_selection: Res<BrushSelection>,
-    mut brushes: Query<&mut Brush>,
-    brush_transforms: Query<&GlobalTransform>,
-    brush_caches: Query<&BrushMeshCache>,
-    mut drag_state: ResMut<VertexDragState>,
-    input_focus: Res<InputFocus>,
-    mut history: ResMut<CommandHistory>,
-) {
-    let EditMode::BrushEdit(BrushEditMode::Vertex) = *edit_mode else {
-        drag_state.active = false;
-        return;
-    };
-
-    if input_focus.0.is_some() {
-        return;
-    }
-
-    let Some(brush_entity) = brush_selection.entity else {
-        return;
-    };
-    let Ok(mut brush) = brushes.get_mut(brush_entity) else {
-        return;
-    };
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
-        return;
-    };
-
-    // Start drag on G or E (extrude = same as move, hull creates transition faces)
-    if (keyboard.just_pressed(KeyCode::KeyG) || keyboard.just_pressed(KeyCode::KeyE))
-        && !drag_state.active
-        && !brush_selection.vertices.is_empty()
-    {
-        if let Ok(cache) = brush_caches.get(brush_entity) {
-            drag_state.active = true;
-            drag_state.constraint = VertexDragConstraint::Free;
-            drag_state.start_brush = Some(brush.clone());
-            drag_state.start_cursor = viewport_cursor;
-            drag_state.start_vertex_positions = brush_selection
-                .vertices
-                .iter()
-                .map(|&vi| cache.vertices.get(vi).copied().unwrap_or(Vec3::ZERO))
-                .collect();
-            drag_state.start_all_vertices = cache.vertices.clone();
-            drag_state.start_face_polygons = cache.face_polygons.clone();
-        }
-        return;
-    }
-
-    if !drag_state.active {
-        return;
-    }
-
-    // Axis constraint toggle: X/Y/Z keys (same key again = back to Free)
-    if keyboard.just_pressed(KeyCode::KeyX) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisX {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisX
-        };
-    } else if keyboard.just_pressed(KeyCode::KeyY) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisY {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisY
-        };
-    } else if keyboard.just_pressed(KeyCode::KeyZ) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisZ {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisZ
-        };
-    }
-
-    // Cancel on Escape or right-click
-    if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
-        if let Some(ref start) = drag_state.start_brush {
-            *brush = start.clone();
-        }
-        drag_state.active = false;
-        drag_state.constraint = VertexDragConstraint::Free;
-        return;
-    }
-
-    // Confirm on left-click or Enter
-    if mouse.just_pressed(MouseButton::Left) || keyboard.just_pressed(KeyCode::Enter) {
-        if let Some(ref start) = drag_state.start_brush {
-            let cmd = SetBrush {
-                entity: brush_entity,
-                old: start.clone(),
-                new: brush.clone(),
-                label: "Move brush vertex".to_string(),
-            };
-            history.undo_stack.push(Box::new(cmd));
-            history.redo_stack.clear();
-        }
-        drag_state.active = false;
-        drag_state.constraint = VertexDragConstraint::Free;
-        return;
-    }
-
-    // Continue drag — compute world-space offset from camera-relative mouse movement
-    let Some(ref start) = drag_state.start_brush else {
-        drag_state.active = false;
-        return;
-    };
-    let Ok(brush_global) = brush_transforms.get(brush_entity) else {
-        return;
-    };
-
-    let mouse_delta = viewport_cursor - drag_state.start_cursor;
-    let Some(local_offset) = compute_brush_drag_offset(
-        drag_state.constraint,
-        mouse_delta,
-        cam_tf,
-        camera,
-        brush_global,
-    ) else {
-        return;
-    };
-
-    // Rebuild from moved vertices using convex hull
-    let mut new_verts = drag_state.start_all_vertices.clone();
-    for (sel_idx, &vert_idx) in brush_selection.vertices.iter().enumerate() {
-        if sel_idx < drag_state.start_vertex_positions.len() && vert_idx < new_verts.len() {
-            new_verts[vert_idx] = drag_state.start_vertex_positions[sel_idx] + local_offset;
-        }
-    }
-
-    if let Some(new_brush) = rebuild_brush_from_vertices(
-        start,
-        &drag_state.start_all_vertices,
-        &drag_state.start_face_polygons,
-        &new_verts,
-    ) {
-        *brush = new_brush;
-    }
+    /// New vertex position for Shift+drag split (edge midpoint or face center).
+    split_vertex: Option<Vec3>,
 }
 
 // ---------------------------------------------------------------------------
@@ -719,11 +1018,12 @@ fn compute_brush_drag_offset(
 }
 
 // ---------------------------------------------------------------------------
-// Edge drag (G key moves selected edges)
+// Edge drag state
 // ---------------------------------------------------------------------------
 
 #[derive(Resource, Default)]
 pub(crate) struct EdgeDragState {
+    pub pending: Option<PendingSubDrag>,
     pub active: bool,
     pub constraint: VertexDragConstraint,
     start_brush: Option<Brush>,
@@ -734,171 +1034,6 @@ pub(crate) struct EdgeDragState {
     start_all_vertices: Vec<Vec3>,
     /// Per-face polygon indices at drag start (for hull rebuild).
     start_face_polygons: Vec<Vec<usize>>,
-}
-
-pub(super) fn handle_edge_drag(
-    edit_mode: Res<EditMode>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
-    brush_selection: Res<BrushSelection>,
-    mut brushes: Query<&mut Brush>,
-    brush_transforms: Query<&GlobalTransform>,
-    brush_caches: Query<&BrushMeshCache>,
-    mut drag_state: ResMut<EdgeDragState>,
-    input_focus: Res<InputFocus>,
-    mut history: ResMut<CommandHistory>,
-) {
-    let EditMode::BrushEdit(BrushEditMode::Edge) = *edit_mode else {
-        drag_state.active = false;
-        return;
-    };
-
-    if input_focus.0.is_some() {
-        return;
-    }
-
-    let Some(brush_entity) = brush_selection.entity else {
-        return;
-    };
-    let Ok(mut brush) = brushes.get_mut(brush_entity) else {
-        return;
-    };
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
-    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
-        return;
-    };
-
-    // Start drag on G or E (extrude = same as move, hull creates transition faces)
-    if (keyboard.just_pressed(KeyCode::KeyG) || keyboard.just_pressed(KeyCode::KeyE))
-        && !drag_state.active
-        && !brush_selection.edges.is_empty()
-    {
-        if let Ok(cache) = brush_caches.get(brush_entity) {
-            drag_state.active = true;
-            drag_state.constraint = VertexDragConstraint::Free;
-            drag_state.start_brush = Some(brush.clone());
-            drag_state.start_cursor = viewport_cursor;
-            drag_state.start_all_vertices = cache.vertices.clone();
-            drag_state.start_face_polygons = cache.face_polygons.clone();
-
-            // Collect unique vertex indices and their positions from all selected edges
-            let mut seen = HashSet::new();
-            let mut edge_verts = Vec::new();
-            for &(a, b) in &brush_selection.edges {
-                if seen.insert(a) {
-                    let pos = cache.vertices.get(a).copied().unwrap_or(Vec3::ZERO);
-                    edge_verts.push((a, pos));
-                }
-                if seen.insert(b) {
-                    let pos = cache.vertices.get(b).copied().unwrap_or(Vec3::ZERO);
-                    edge_verts.push((b, pos));
-                }
-            }
-            drag_state.start_edge_vertices = edge_verts;
-        }
-        return;
-    }
-
-    if !drag_state.active {
-        return;
-    }
-
-    // Axis constraint toggle
-    if keyboard.just_pressed(KeyCode::KeyX) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisX {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisX
-        };
-    } else if keyboard.just_pressed(KeyCode::KeyY) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisY {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisY
-        };
-    } else if keyboard.just_pressed(KeyCode::KeyZ) {
-        drag_state.constraint = if drag_state.constraint == VertexDragConstraint::AxisZ {
-            VertexDragConstraint::Free
-        } else {
-            VertexDragConstraint::AxisZ
-        };
-    }
-
-    // Cancel
-    if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
-        if let Some(ref start) = drag_state.start_brush {
-            *brush = start.clone();
-        }
-        drag_state.active = false;
-        drag_state.constraint = VertexDragConstraint::Free;
-        return;
-    }
-
-    // Confirm
-    if mouse.just_pressed(MouseButton::Left) || keyboard.just_pressed(KeyCode::Enter) {
-        if let Some(ref start) = drag_state.start_brush {
-            let cmd = SetBrush {
-                entity: brush_entity,
-                old: start.clone(),
-                new: brush.clone(),
-                label: "Move brush edge".to_string(),
-            };
-            history.undo_stack.push(Box::new(cmd));
-            history.redo_stack.clear();
-        }
-        drag_state.active = false;
-        drag_state.constraint = VertexDragConstraint::Free;
-        return;
-    }
-
-    // Continue drag
-    let Some(ref start) = drag_state.start_brush else {
-        drag_state.active = false;
-        return;
-    };
-    let Ok(brush_global) = brush_transforms.get(brush_entity) else {
-        return;
-    };
-
-    let mouse_delta = viewport_cursor - drag_state.start_cursor;
-    let Some(local_offset) = compute_brush_drag_offset(
-        drag_state.constraint,
-        mouse_delta,
-        cam_tf,
-        camera,
-        brush_global,
-    ) else {
-        return;
-    };
-
-    // Rebuild from moved edge vertices using convex hull
-    let mut new_verts = drag_state.start_all_vertices.clone();
-    for &(vi, start_pos) in &drag_state.start_edge_vertices {
-        if vi < new_verts.len() {
-            new_verts[vi] = start_pos + local_offset;
-        }
-    }
-
-    if let Some(new_brush) = rebuild_brush_from_vertices(
-        start,
-        &drag_state.start_all_vertices,
-        &drag_state.start_face_polygons,
-        &new_verts,
-    ) {
-        *brush = new_brush;
-    }
 }
 
 // ---------------------------------------------------------------------------

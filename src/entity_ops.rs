@@ -28,8 +28,8 @@ pub struct ComponentClipboard {
     pub data: Vec<(TypeId, Box<dyn PartialReflect>)>,
 }
 
-// Re-export from bevy_jsn
-pub use bevy_jsn::GltfSource;
+// Re-export from jackdaw_jsn
+pub use jackdaw_jsn::GltfSource;
 
 pub struct EntityOpsPlugin;
 
@@ -83,22 +83,30 @@ pub fn create_entity(
         EntityTemplate::Empty => commands
             .spawn((Name::new("Empty"), Transform::default()))
             .id(),
-        EntityTemplate::Cube => commands
-            .spawn((
-                Name::new("Cube"),
-                crate::brush::Brush::cuboid(0.5, 0.5, 0.5),
-                Transform::default(),
-                Visibility::default(),
-            ))
-            .id(),
-        EntityTemplate::Sphere => commands
-            .spawn((
-                Name::new("Sphere"),
-                crate::brush::Brush::sphere(0.5),
-                Transform::default(),
-                Visibility::default(),
-            ))
-            .id(),
+        EntityTemplate::Cube => {
+            let id = commands
+                .spawn((
+                    Name::new("Cube"),
+                    crate::brush::Brush::cuboid(0.5, 0.5, 0.5),
+                    Transform::default(),
+                    Visibility::default(),
+                ))
+                .id();
+            commands.queue(apply_last_texture(id));
+            id
+        }
+        EntityTemplate::Sphere => {
+            let id = commands
+                .spawn((
+                    Name::new("Sphere"),
+                    crate::brush::Brush::sphere(0.5),
+                    Transform::default(),
+                    Visibility::default(),
+                ))
+                .id();
+            commands.queue(apply_last_texture(id));
+            id
+        }
         EntityTemplate::PointLight => commands
             .spawn((
                 Name::new("Point Light"),
@@ -140,6 +148,23 @@ pub fn create_entity(
 
     selection.select_single(commands, entity);
     entity
+}
+
+/// Returns a command that applies the last-used texture to all faces of a brush entity.
+fn apply_last_texture(entity: Entity) -> impl FnOnce(&mut World) {
+    move |world: &mut World| {
+        let tex_path = world
+            .resource::<crate::brush::LastUsedTexture>()
+            .texture_path
+            .clone();
+        if let Some(path) = tex_path {
+            if let Some(mut brush) = world.get_mut::<crate::brush::Brush>(entity) {
+                for face in &mut brush.faces {
+                    face.texture_path = Some(path.clone());
+                }
+            }
+        }
+    }
 }
 
 /// World-access version of `create_entity` — used from menu actions and other deferred contexts.
@@ -328,12 +353,28 @@ fn handle_entity_keys(world: &mut World) {
         return;
     }
 
-    // Don't process entity keys during modal transform operations
+    // Don't process entity keys during modal transform operations or draw mode
     let modal_active = world
         .resource::<crate::modal_transform::ModalTransformState>()
         .active
         .is_some();
     if modal_active {
+        return;
+    }
+    let draw_active = world
+        .resource::<crate::draw_brush::DrawBrushState>()
+        .active
+        .is_some();
+    if draw_active {
+        return;
+    }
+
+    // Don't process entity ops during brush edit mode (Delete etc. handled by brush systems)
+    let in_brush_edit = !matches!(
+        *world.resource::<crate::brush::EditMode>(),
+        crate::brush::EditMode::Object
+    );
+    if in_brush_edit {
         return;
     }
 
@@ -349,6 +390,15 @@ fn handle_entity_keys(world: &mut World) {
     let h_pressed = keyboard.just_pressed(KeyCode::KeyH);
     let c_pressed = keyboard.just_pressed(KeyCode::KeyC);
     let v_pressed = keyboard.just_pressed(KeyCode::KeyV);
+
+    // Arrow key / PageUp/Down presses
+    let left = keyboard.just_pressed(KeyCode::ArrowLeft);
+    let right = keyboard.just_pressed(KeyCode::ArrowRight);
+    let up = keyboard.just_pressed(KeyCode::ArrowUp);
+    let down = keyboard.just_pressed(KeyCode::ArrowDown);
+    let page_up = keyboard.just_pressed(KeyCode::PageUp);
+    let page_down = keyboard.just_pressed(KeyCode::PageDown);
+    let arrow_pressed = left || right || up || down || page_up || page_down;
 
     if delete_pressed {
         delete_selected(world);
@@ -366,6 +416,46 @@ fn handle_entity_keys(world: &mut World) {
         reset_transform_selected(world, TransformReset::Scale);
     } else if h_pressed && !ctrl && !alt {
         toggle_visibility_selected(world);
+    } else if alt && arrow_pressed {
+        // Alt+Arrow/PageUp/PageDown: 90-degree rotation
+        let rotation = if left {
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+        } else if right {
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+        } else if up {
+            Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+        } else if down {
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+        } else if page_up {
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+        } else {
+            // page_down
+            Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
+        };
+        rotate_selected(world, rotation);
+    } else if arrow_pressed && !alt {
+        // Arrow keys: grid-unit movement
+        let grid_size = world.resource::<crate::snapping::SnapSettings>().grid_size();
+        let offset = if left {
+            Vec3::new(-grid_size, 0.0, 0.0)
+        } else if right {
+            Vec3::new(grid_size, 0.0, 0.0)
+        } else if up {
+            Vec3::new(0.0, 0.0, -grid_size)
+        } else if down {
+            Vec3::new(0.0, 0.0, grid_size)
+        } else if page_up {
+            Vec3::new(0.0, grid_size, 0.0)
+        } else {
+            // page_down
+            Vec3::new(0.0, -grid_size, 0.0)
+        };
+
+        if ctrl {
+            // Ctrl+arrow: duplicate then nudge
+            duplicate_selected(world);
+        }
+        nudge_selected(world, offset);
     }
 }
 
@@ -442,6 +532,100 @@ fn reset_transform_selected(world: &mut World, reset: TransformReset) {
 }
 
 // ---------------------------------------------------------------------------
+// Nudge selected entities by offset
+// ---------------------------------------------------------------------------
+
+fn nudge_selected(world: &mut World, offset: Vec3) {
+    let selection = world.resource::<Selection>();
+    let entities: Vec<Entity> = selection.entities.clone();
+
+    if entities.is_empty() {
+        return;
+    }
+
+    let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
+
+    for &entity in &entities {
+        if world.get_entity(entity).is_err() {
+            continue;
+        }
+        let Some(&old_transform) = world.get::<Transform>(entity) else {
+            continue;
+        };
+
+        let new_transform = Transform {
+            translation: old_transform.translation + offset,
+            ..old_transform
+        };
+
+        let cmd = crate::commands::SetTransform {
+            entity,
+            old_transform,
+            new_transform,
+        };
+        cmd.execute(world);
+        cmds.push(Box::new(cmd));
+    }
+
+    if !cmds.is_empty() {
+        let group = crate::commands::CommandGroup {
+            commands: cmds,
+            label: "Nudge".to_string(),
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(group));
+        history.redo_stack.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rotate selected entities by quaternion
+// ---------------------------------------------------------------------------
+
+fn rotate_selected(world: &mut World, rotation: Quat) {
+    let selection = world.resource::<Selection>();
+    let entities: Vec<Entity> = selection.entities.clone();
+
+    if entities.is_empty() {
+        return;
+    }
+
+    let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
+
+    for &entity in &entities {
+        if world.get_entity(entity).is_err() {
+            continue;
+        }
+        let Some(&old_transform) = world.get::<Transform>(entity) else {
+            continue;
+        };
+
+        let new_transform = Transform {
+            rotation: rotation * old_transform.rotation,
+            ..old_transform
+        };
+
+        let cmd = crate::commands::SetTransform {
+            entity,
+            old_transform,
+            new_transform,
+        };
+        cmd.execute(world);
+        cmds.push(Box::new(cmd));
+    }
+
+    if !cmds.is_empty() {
+        let group = crate::commands::CommandGroup {
+            commands: cmds,
+            label: "Rotate 90\u{00b0}".to_string(),
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(group));
+        history.redo_stack.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Copy/Paste components
 // ---------------------------------------------------------------------------
 
@@ -471,7 +655,7 @@ fn copy_components(world: &mut World) {
 
         // Skip internal types
         let path = registration.type_info().type_path_table().path();
-        if path.starts_with("bevy_scene_editor")
+        if path.starts_with("jackdaw")
             || path.contains("ChildOf")
             || path.contains("Children")
         {

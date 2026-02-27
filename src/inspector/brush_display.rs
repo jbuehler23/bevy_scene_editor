@@ -7,10 +7,18 @@ use crate::commands::CommandHistory;
 use crate::texture_browser::ClearTextureFromFaces;
 
 use bevy::prelude::*;
-use editor_feathers::{numeric_input, tokens};
-use editor_widgets::numeric_input::NumericValueChanged;
+use jackdaw_feathers::{numeric_input, tokens};
+use jackdaw_widgets::numeric_input::NumericValueChanged;
 
 use super::{BrushFaceField, BrushFaceFieldBinding, BrushFacePropsContainer};
+
+/// Apply the first selected face's texture + UV settings to all faces of the brush.
+#[derive(Event, Debug, Clone)]
+pub(crate) struct ApplyTextureToAllFaces;
+
+/// Apply a UV scale preset to all selected faces.
+#[derive(Event, Debug, Clone)]
+pub(crate) struct ApplyUvScalePreset(pub f32);
 
 pub(super) fn spawn_brush_display(
     commands: &mut Commands,
@@ -263,6 +271,49 @@ pub(crate) fn update_brush_face_properties(
         );
     }
 
+    // "Apply to All Faces" button (copies this face's texture + UV to every face)
+    if face.texture_path.is_some() {
+        let apply_all_btn = commands
+            .spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    ..Default::default()
+                },
+                BackgroundColor(tokens::INPUT_BG),
+                ChildOf(container_entity),
+            ))
+            .id();
+        commands.spawn((
+            Text::new("Apply to All Faces"),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_PRIMARY),
+            ChildOf(apply_all_btn),
+        ));
+        commands.entity(apply_all_btn).observe(
+            |_: On<Pointer<Click>>, mut commands: Commands| {
+                commands.trigger(ApplyTextureToAllFaces);
+            },
+        );
+        commands.entity(apply_all_btn).observe(
+            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                    bg.0 = tokens::HOVER_BG;
+                }
+            },
+        );
+        commands.entity(apply_all_btn).observe(
+            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                    bg.0 = tokens::INPUT_BG;
+                }
+            },
+        );
+    }
+
     // UV Offset
     spawn_brush_face_field_row(
         &mut commands,
@@ -286,6 +337,67 @@ pub(crate) fn update_brush_face_properties(
         BrushFaceField::UvScaleY,
         brush_entity,
     );
+
+    // UV Scale preset buttons
+    let preset_row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(tokens::SPACING_XS),
+                width: Val::Percent(100.0),
+                ..Default::default()
+            },
+            ChildOf(container_entity),
+        ))
+        .id();
+    for preset in [0.25_f32, 0.5, 1.0, 2.0] {
+        let label = if preset == 1.0 {
+            "1x".to_string()
+        } else {
+            format!("{preset}x")
+        };
+        let btn = commands
+            .spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    flex_grow: 1.0,
+                    justify_content: JustifyContent::Center,
+                    ..Default::default()
+                },
+                BackgroundColor(tokens::INPUT_BG),
+                ChildOf(preset_row),
+            ))
+            .id();
+        commands.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_PRIMARY),
+            ChildOf(btn),
+        ));
+        commands.entity(btn).observe(
+            move |_: On<Pointer<Click>>, mut commands: Commands| {
+                commands.trigger(ApplyUvScalePreset(preset));
+            },
+        );
+        commands.entity(btn).observe(
+            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                    bg.0 = tokens::HOVER_BG;
+                }
+            },
+        );
+        commands.entity(btn).observe(
+            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                    bg.0 = tokens::INPUT_BG;
+                }
+            },
+        );
+    }
 
     // UV Rotation
     let rot_row = commands
@@ -495,6 +607,88 @@ pub(crate) fn handle_clear_texture(
         old,
         new: brush.clone(),
         label: "Clear texture".to_string(),
+    };
+    history.undo_stack.push(Box::new(cmd));
+    history.redo_stack.clear();
+}
+
+pub(crate) fn handle_apply_texture_to_all(
+    _event: On<ApplyTextureToAllFaces>,
+    brush_selection: Res<BrushSelection>,
+    edit_mode: Res<EditMode>,
+    mut brushes: Query<&mut Brush>,
+    mut history: ResMut<CommandHistory>,
+) {
+    if *edit_mode != EditMode::BrushEdit(BrushEditMode::Face) {
+        return;
+    }
+    let Some(brush_entity) = brush_selection.entity else {
+        return;
+    };
+    if brush_selection.faces.is_empty() {
+        return;
+    }
+    let Ok(mut brush) = brushes.get_mut(brush_entity) else {
+        return;
+    };
+
+    let source_idx = brush_selection.faces[0];
+    if source_idx >= brush.faces.len() {
+        return;
+    }
+    let source = brush.faces[source_idx].clone();
+
+    let old = brush.clone();
+    for face in &mut brush.faces {
+        face.texture_path = source.texture_path.clone();
+        face.uv_scale = source.uv_scale;
+        face.uv_offset = source.uv_offset;
+        face.uv_rotation = source.uv_rotation;
+    }
+
+    let cmd = SetBrush {
+        entity: brush_entity,
+        old,
+        new: brush.clone(),
+        label: "Apply texture to all faces".to_string(),
+    };
+    history.undo_stack.push(Box::new(cmd));
+    history.redo_stack.clear();
+}
+
+pub(crate) fn handle_uv_scale_preset(
+    event: On<ApplyUvScalePreset>,
+    brush_selection: Res<BrushSelection>,
+    edit_mode: Res<EditMode>,
+    mut brushes: Query<&mut Brush>,
+    mut history: ResMut<CommandHistory>,
+) {
+    if *edit_mode != EditMode::BrushEdit(BrushEditMode::Face) {
+        return;
+    }
+    let Some(brush_entity) = brush_selection.entity else {
+        return;
+    };
+    if brush_selection.faces.is_empty() {
+        return;
+    }
+    let Ok(mut brush) = brushes.get_mut(brush_entity) else {
+        return;
+    };
+
+    let old = brush.clone();
+    let scale = Vec2::splat(event.0);
+    for &face_idx in &brush_selection.faces {
+        if face_idx < brush.faces.len() {
+            brush.faces[face_idx].uv_scale = scale;
+        }
+    }
+
+    let cmd = SetBrush {
+        entity: brush_entity,
+        old,
+        new: brush.clone(),
+        label: "Set UV scale preset".to_string(),
     };
     history.undo_stack.push(Box::new(cmd));
     history.redo_stack.clear();

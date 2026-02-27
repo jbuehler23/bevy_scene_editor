@@ -1,4 +1,8 @@
-use bevy::{input_focus::InputFocus, prelude::*};
+use bevy::{
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    input_focus::InputFocus,
+    prelude::*,
+};
 use bevy_infinite_grid::{InfiniteGrid, InfiniteGridSettings};
 
 pub struct SnappingPlugin;
@@ -206,14 +210,36 @@ fn handle_grid_size_keys(
     keyboard: Res<ButtonInput<KeyCode>>,
     input_focus: Res<InputFocus>,
     modal: Res<crate::modal_transform::ModalTransformState>,
-    walk_mode: Res<crate::viewport::WalkModeState>,
+    mut scroll_events: MessageReader<MouseWheel>,
     mut snap: ResMut<SnapSettings>,
 ) {
-    if input_focus.0.is_some() || modal.active.is_some() || walk_mode.active {
+    if input_focus.0.is_some() || modal.active.is_some() {
         return;
     }
 
+    let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let alt = keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
+
     let mut changed = false;
+
+    // Ctrl+Alt+Scroll: change grid size
+    if ctrl && alt {
+        for event in scroll_events.read() {
+            let delta = match event.unit {
+                MouseScrollUnit::Line => event.y,
+                MouseScrollUnit::Pixel => event.y * 0.01,
+            };
+            if delta > 0.0 {
+                snap.grid_power = (snap.grid_power + 1).min(GRID_POWER_MAX);
+                changed = true;
+            } else if delta < 0.0 {
+                snap.grid_power = (snap.grid_power - 1).max(GRID_POWER_MIN);
+                changed = true;
+            }
+        }
+    }
+
+    // Bracket keys: alternative grid size control
     if keyboard.just_pressed(KeyCode::BracketLeft) {
         snap.grid_power = (snap.grid_power - 1).max(GRID_POWER_MIN);
         changed = true;

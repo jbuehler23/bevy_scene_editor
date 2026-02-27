@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_scene_editor::EditorPlugin;
+use jackdaw::EditorPlugin;
 
 fn main() -> AppExit {
     App::new()

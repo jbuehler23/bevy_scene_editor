@@ -4,8 +4,8 @@ use bevy::{
     feathers::theme::ThemedText,
     prelude::*,
 };
-use editor_feathers::{file_browser, icons::IconFont, tokens};
-use editor_widgets::file_browser::{FileBrowserItem, FileItemDoubleClicked};
+use jackdaw_feathers::{file_browser, icons::IconFont, tokens};
+use jackdaw_widgets::file_browser::{FileBrowserItem, FileItemDoubleClicked};
 
 use crate::{
     brush::{BrushEditMode, BrushSelection, EditMode},

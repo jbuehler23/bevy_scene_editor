@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use bevy::prelude::*;
-use editor_feathers::{panel_header, text_input, tokens};
-use editor_widgets::text_input::TextInput;
+use jackdaw_feathers::{panel_header, text_input, tokens};
+use jackdaw_widgets::text_input::TextInput;
 
 use crate::{
-    brush::{Brush, BrushEditMode, BrushSelection, EditMode, SetBrush},
+    brush::{Brush, BrushEditMode, BrushSelection, EditMode, LastUsedTexture, SetBrush},
     commands::CommandHistory,
     EditorEntity,
 };
@@ -141,6 +141,7 @@ fn handle_apply_texture(
     edit_mode: Res<EditMode>,
     mut brushes: Query<&mut Brush>,
     mut history: ResMut<CommandHistory>,
+    mut last_texture: ResMut<LastUsedTexture>,
 ) {
     if *edit_mode != EditMode::BrushEdit(BrushEditMode::Face) {
         return;
@@ -161,6 +162,9 @@ fn handle_apply_texture(
             brush.faces[face_idx].texture_path = Some(event.path.clone());
         }
     }
+
+    // Remember the last-used texture for new brushes
+    last_texture.texture_path = Some(event.path.clone());
 
     let cmd = SetBrush {
         entity: brush_entity,

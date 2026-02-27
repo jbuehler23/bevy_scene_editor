@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use editor_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRight};
+use jackdaw_feathers::status_bar::{StatusBarCenter, StatusBarLeft, StatusBarRight};
 
 use crate::{
     brush::{BrushEditMode, ClipState, EditMode, VertexDragState, VertexDragConstraint},
@@ -9,7 +9,6 @@ use crate::{
     scene_io::SceneFilePath,
     selection::{Selected, Selection},
     snapping::SnapSettings,
-    viewport::WalkModeState,
     EditorEntity,
 };
 
@@ -99,7 +98,6 @@ fn update_status_right(
     snap_settings: Res<SnapSettings>,
     modal: Res<ModalTransformState>,
     edit_mode: Res<EditMode>,
-    walk_mode: Res<WalkModeState>,
     vertex_drag: Res<VertexDragState>,
     clip_state: Res<ClipState>,
     draw_state: Res<DrawBrushState>,
@@ -110,7 +108,6 @@ fn update_status_right(
         && !snap_settings.is_changed()
         && !modal.is_changed()
         && !edit_mode.is_changed()
-        && !walk_mode.is_changed()
         && !vertex_drag.is_changed()
         && !clip_state.is_changed()
         && !draw_state.is_changed()
@@ -123,9 +120,10 @@ fn update_status_right(
 
     // Show draw brush mode status
     if let Some(ref active) = draw_state.active {
-        let mode_label = match active.mode {
-            DrawMode::Add => "ADD",
-            DrawMode::Cut => "CUT",
+        let mode_label = match (active.mode, active.append_target.is_some()) {
+            (DrawMode::Add, true) => "APPEND",
+            (DrawMode::Add, false) => "ADD",
+            (DrawMode::Cut, _) => "CUT",
         };
         text.0 = match active.phase {
             DrawPhase::PlacingFirstCorner => {
@@ -141,15 +139,6 @@ fn update_status_right(
                 )
             }
         };
-        return;
-    }
-
-    // Show walk mode status
-    if walk_mode.active {
-        text.0 = format!(
-            "WALK MODE: WASD move, QE up/down, Scroll speed ({:.1}) | LMB/Enter confirm, RMB/Esc cancel",
-            walk_mode.speed
-        );
         return;
     }
 
@@ -179,7 +168,12 @@ fn update_status_right(
         } else {
             String::new()
         };
-        text.0 = format!("EDIT MODE: {sub_str} | 1 Vert  2 Edge  3 Face  4 Clip | ` exit | G grab  E extrude  Del remove{extra}");
+        let base_hint = if sub_mode == BrushEditMode::Vertex {
+            "Drag move  Shift+Drag split edge  Del remove"
+        } else {
+            "Drag to move  Del remove"
+        };
+        text.0 = format!("EDIT MODE: {sub_str} | 1 Vert  2 Edge  3 Face  4 Clip | {base_hint}{extra}");
         return;
     }
 

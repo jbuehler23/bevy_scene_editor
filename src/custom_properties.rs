@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
-// Re-export types from bevy_jsn
-pub use bevy_jsn::{CustomProperties, PropertyValue};
+// Re-export types from jackdaw_jsn
+pub use jackdaw_jsn::{CustomProperties, PropertyValue};
 
 pub struct CustomPropertiesPlugin;
 

@@ -59,10 +59,10 @@ pub trait Displayable {
 impl Displayable for Name {
     fn display(&self, entity: &mut EntityCommands, source: Entity) {
         entity
-            .insert(editor_feathers::text_input::text_input("Name..."))
-            .insert(editor_widgets::text_input::TextInput::new(self.to_string()))
+            .insert(jackdaw_feathers::text_input::text_input("Name..."))
+            .insert(jackdaw_widgets::text_input::TextInput::new(self.to_string()))
             .observe(
-                move |text: On<editor_widgets::text_input::EnteredText>,
+                move |text: On<jackdaw_widgets::text_input::EnteredText>,
                       mut names: Query<&mut Name>|
                       -> Result<(), BevyError> {
                     let mut name = names.get_mut(source)?;
@@ -90,6 +90,8 @@ impl Plugin for InspectorPlugin {
             .add_observer(reflect_fields::on_checkbox_commit)
             .add_observer(custom_props_display::on_custom_property_checkbox_commit)
             .add_observer(brush_display::handle_clear_texture)
+            .add_observer(brush_display::handle_apply_texture_to_all)
+            .add_observer(brush_display::handle_uv_scale_preset)
             .add_systems(
                 Update,
                 (

@@ -11,11 +11,11 @@ use bevy::{
     },
     prelude::*,
 };
-use editor_feathers::{
+use jackdaw_feathers::{
     icons::{EditorFont, Icon, IconFont},
     tokens,
 };
-use editor_widgets::collapsible::{
+use jackdaw_widgets::collapsible::{
     CollapsibleBody, CollapsibleHeader, CollapsibleSection, ToggleCollapsible,
 };
 
@@ -93,7 +93,7 @@ pub(crate) fn add_component_displays(
             {
                 let table = registration.type_info().type_path_table();
                 let full_path = table.path();
-                if full_path.starts_with("bevy_scene_editor") {
+                if full_path.starts_with("jackdaw") {
                     return None;
                 }
                 let short = table.short_path().to_string();
@@ -103,7 +103,7 @@ pub(crate) fn add_component_displays(
 
             // Fallback: use Components name
             let name = components.get_name(component_id)?;
-            if name.starts_with("bevy_scene_editor") {
+            if name.starts_with("jackdaw") {
                 return None;
             }
             Some((name.shortname().to_string(), "Other".to_string(), component_id))

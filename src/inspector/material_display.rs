@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use editor_feathers::{numeric_input, tokens};
-use editor_widgets::numeric_input::NumericValueChanged;
+use jackdaw_feathers::{numeric_input, tokens};
+use jackdaw_widgets::numeric_input::NumericValueChanged;
 
 /// Marker for material field UI entities
 #[derive(Component)]
@@ -86,15 +86,15 @@ fn spawn_material_fields(world: &mut World, body_entity: Entity, source_entity: 
         let rgba = [srgba.red, srgba.green, srgba.blue, srgba.alpha];
         let picker = world
             .spawn((
-                editor_feathers::color_picker::color_picker(
-                    editor_feathers::color_picker::ColorPickerProps::new().with_color(rgba),
+                jackdaw_feathers::color_picker::color_picker(
+                    jackdaw_feathers::color_picker::ColorPickerProps::new().with_color(rgba),
                 ),
                 MaterialFieldMarker,
                 ChildOf(row),
             ))
             .id();
         world.entity_mut(picker).observe(
-            move |event: On<editor_feathers::color_picker::ColorPickerCommitEvent>,
+            move |event: On<jackdaw_feathers::color_picker::ColorPickerCommitEvent>,
                   mut materials: ResMut<Assets<StandardMaterial>>,
                   mat_query: Query<&MeshMaterial3d<StandardMaterial>>| {
                 let Ok(mat_comp) = mat_query.get(source_entity) else {

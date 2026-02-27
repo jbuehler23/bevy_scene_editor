@@ -5,8 +5,8 @@ use bevy::{
     ui::UiGlobalTransform,
 };
 
-use bevy_jsn::{Brush, BrushFaceData, BrushPlane};
-use bevy_jsn_geometry::{
+use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
+use jackdaw_geometry::{
     brush_planes_to_world, brushes_intersect, clean_degenerate_faces, compute_brush_geometry,
     compute_face_tangent_axes, subtract_brush,
 };
@@ -62,6 +62,8 @@ pub struct ActiveDraw {
     pub plane_locked: bool,
     /// World-space cursor position on the drawing plane (for crosshair preview).
     pub cursor_on_plane: Option<Vec3>,
+    /// When set, the drawn shape will be CSG-unioned with this brush instead of spawning a new entity.
+    pub append_target: Option<Entity>,
 }
 
 #[derive(Resource, Default)]
@@ -128,12 +130,14 @@ fn draw_brush_activate(
     input_focus: Res<InputFocus>,
     mut draw_state: ResMut<DrawBrushState>,
     modal: Res<crate::modal_transform::ModalTransformState>,
-    edit_mode: Res<crate::brush::EditMode>,
-    walk_mode: Res<crate::viewport::WalkModeState>,
+    mut edit_mode: ResMut<crate::brush::EditMode>,
+    mut brush_selection: ResMut<crate::brush::BrushSelection>,
+    selection: Res<Selection>,
+    brush_query: Query<(), With<Brush>>,
 ) {
-    // Handle Tab toggle while in draw mode
+    // Handle Tab toggle while in draw mode (works in all phases)
     if let Some(ref mut active) = draw_state.active {
-        if keyboard.just_pressed(KeyCode::Tab) && active.phase == DrawPhase::PlacingFirstCorner {
+        if keyboard.just_pressed(KeyCode::Tab) {
             active.mode = match active.mode {
                 DrawMode::Add => DrawMode::Cut,
                 DrawMode::Cut => DrawMode::Add,
@@ -142,16 +146,35 @@ fn draw_brush_activate(
         return;
     }
 
-    if !keyboard.just_pressed(KeyCode::KeyB) {
+    // B = draw in Add mode, C = draw in Cut mode
+    let mode = if keyboard.just_pressed(KeyCode::KeyB) {
+        DrawMode::Add
+    } else if keyboard.just_pressed(KeyCode::KeyC) {
+        DrawMode::Cut
+    } else {
+        return;
+    };
+    // Standard guards
+    if input_focus.0.is_some() || modal.active.is_some() {
         return;
     }
-    // Standard guards
-    if input_focus.0.is_some()
-        || modal.active.is_some()
-        || *edit_mode != crate::brush::EditMode::Object
-        || walk_mode.active
-    {
-        return;
+
+    // Check if a brush is selected — if so and mode is Add, use append mode
+    let append_target = if mode == DrawMode::Add {
+        selection
+            .primary()
+            .filter(|&e| brush_query.contains(e))
+    } else {
+        None
+    };
+
+    // Exit brush edit mode if active
+    if *edit_mode != crate::brush::EditMode::Object {
+        *edit_mode = crate::brush::EditMode::Object;
+        brush_selection.entity = None;
+        brush_selection.faces.clear();
+        brush_selection.vertices.clear();
+        brush_selection.edges.clear();
     }
 
     draw_state.active = Some(ActiveDraw {
@@ -159,7 +182,7 @@ fn draw_brush_activate(
         corner2: Vec3::ZERO,
         depth: 0.0,
         phase: DrawPhase::PlacingFirstCorner,
-        mode: DrawMode::Add,
+        mode,
         plane: DrawPlane {
             origin: Vec3::ZERO,
             normal: Vec3::Y,
@@ -169,6 +192,7 @@ fn draw_brush_activate(
         extrude_start_cursor: Vec2::ZERO,
         plane_locked: false,
         cursor_on_plane: None,
+        append_target,
     });
 }
 
@@ -367,7 +391,11 @@ fn draw_brush_confirm(
             match active_owned.mode {
                 DrawMode::Add => {
                     draw_state.active = None;
-                    spawn_drawn_brush(&active_owned, &mut commands);
+                    if active_owned.append_target.is_some() {
+                        append_to_brush(&active_owned, &mut commands);
+                    } else {
+                        spawn_drawn_brush(&active_owned, &mut commands);
+                    }
                 }
                 DrawMode::Cut => {
                     // Defer clearing draw state to command application so that
@@ -550,6 +578,15 @@ fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
     };
 
     commands.queue(move |world: &mut World| {
+        // Apply last-used texture to all faces
+        let last_tex = world.resource::<crate::brush::LastUsedTexture>().texture_path.clone();
+        let mut brush = brush;
+        if let Some(ref path) = last_tex {
+            for face in &mut brush.faces {
+                face.texture_path = Some(path.clone());
+            }
+        }
+
         let entity = world
             .spawn((
                 Name::new("Brush"),
@@ -583,6 +620,177 @@ fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
         let cmd = CreateBrushCommand {
             entity,
             scene_snapshot: snapshot,
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(cmd));
+        history.redo_stack.clear();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// CSG union (Append mode)
+// ---------------------------------------------------------------------------
+
+fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
+    let Some(target_entity) = active.append_target else {
+        return;
+    };
+
+    // Build the drawn cuboid's 8 world-space vertices
+    let base = footprint_corners(active);
+    let offset = active.plane.normal * active.depth;
+    let mut drawn_verts: Vec<Vec3> = Vec::with_capacity(8);
+    for corner in &base {
+        drawn_verts.push(*corner);
+        drawn_verts.push(*corner + offset);
+    }
+
+    commands.queue(move |world: &mut World| {
+        use avian3d::parry::math::Point as ParryPoint;
+        use avian3d::parry::transformation::convex_hull;
+
+        let Some(brush) = world.get::<Brush>(target_entity) else {
+            return;
+        };
+        let old_brush = brush.clone();
+
+        let Some(global_tf) = world.get::<GlobalTransform>(target_entity) else {
+            return;
+        };
+        let (_, rotation, translation) = global_tf.to_scale_rotation_translation();
+        let inv_rotation = rotation.inverse();
+
+        // Get existing brush vertices in local space, then convert drawn verts to local space
+        let existing_verts = compute_brush_geometry(&old_brush.faces).0;
+        let existing_count = existing_verts.len();
+
+        let mut all_local_verts: Vec<Vec3> = existing_verts;
+        for v in &drawn_verts {
+            all_local_verts.push(inv_rotation * (*v - translation));
+        }
+
+        if all_local_verts.len() < 4 {
+            return;
+        }
+
+        // Compute convex hull
+        let points: Vec<ParryPoint<f32>> = all_local_verts
+            .iter()
+            .map(|v| ParryPoint::new(v.x, v.y, v.z))
+            .collect();
+        let (hull_verts, hull_tris) = convex_hull(&points);
+        if hull_verts.len() < 4 || hull_tris.is_empty() {
+            return;
+        }
+
+        let hull_positions: Vec<Vec3> = hull_verts
+            .iter()
+            .map(|p| Vec3::new(p.x, p.y, p.z))
+            .collect();
+        let hull_faces = crate::brush::merge_hull_triangles(&hull_positions, &hull_tris);
+        if hull_faces.len() < 4 {
+            return;
+        }
+
+        // Build new face data, matching old faces where possible for texture preservation
+        let old_face_polygons = compute_brush_geometry(&old_brush.faces).1;
+        let last_tex = world
+            .resource::<crate::brush::LastUsedTexture>()
+            .texture_path
+            .clone();
+
+        let mut new_faces = Vec::with_capacity(hull_faces.len());
+
+        // Map hull vertex indices back to all_local_verts indices
+        let hull_to_input: Vec<usize> = hull_positions
+            .iter()
+            .map(|hp| {
+                all_local_verts
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        (**a - *hp)
+                            .length_squared()
+                            .partial_cmp(&(**b - *hp).length_squared())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)
+            })
+            .collect();
+
+        for hull_face in &hull_faces {
+            // Find best matching old face by normal similarity
+            let mut best_old = None;
+            let mut best_score = -1.0_f32;
+
+            // Check if this face has vertices from the original brush
+            let input_verts: Vec<usize> = hull_face
+                .vertex_indices
+                .iter()
+                .map(|&hi| hull_to_input[hi])
+                .collect();
+            let has_original = input_verts.iter().any(|&i| i < existing_count);
+
+            if has_original {
+                for (old_idx, old_polygon) in old_face_polygons.iter().enumerate() {
+                    let old_set: std::collections::HashSet<usize> =
+                        old_polygon.iter().copied().collect();
+                    let overlap = input_verts
+                        .iter()
+                        .filter(|&&i| i < existing_count && old_set.contains(&i))
+                        .count() as f32;
+                    let normal_sim =
+                        hull_face.normal.dot(old_brush.faces[old_idx].plane.normal);
+                    let score = overlap + normal_sim * 0.1;
+                    if score > best_score {
+                        best_score = score;
+                        best_old = Some(old_idx);
+                    }
+                }
+            }
+
+            let face_data = if let Some(old_idx) = best_old {
+                let old_face = &old_brush.faces[old_idx];
+                BrushFaceData {
+                    plane: BrushPlane {
+                        normal: hull_face.normal,
+                        distance: hull_face.distance,
+                    },
+                    material_index: old_face.material_index,
+                    texture_path: old_face.texture_path.clone(),
+                    uv_offset: old_face.uv_offset,
+                    uv_scale: old_face.uv_scale,
+                    uv_rotation: old_face.uv_rotation,
+                }
+            } else {
+                // New face from the appended shape — use last-used texture
+                BrushFaceData {
+                    plane: BrushPlane {
+                        normal: hull_face.normal,
+                        distance: hull_face.distance,
+                    },
+                    texture_path: last_tex.clone(),
+                    uv_scale: Vec2::ONE,
+                    ..default()
+                }
+            };
+            new_faces.push(face_data);
+        }
+
+        let new_brush = Brush { faces: new_faces };
+
+        // Apply
+        if let Some(mut brush) = world.get_mut::<Brush>(target_entity) {
+            *brush = new_brush.clone();
+        }
+
+        // Undo command
+        let cmd = crate::brush::SetBrush {
+            entity: target_entity,
+            old: old_brush,
+            new: new_brush,
+            label: "Append brush geometry".to_string(),
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(cmd));

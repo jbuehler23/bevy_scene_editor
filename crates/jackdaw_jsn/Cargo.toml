@@ -1,0 +1,14 @@
+[package]
+name = "jackdaw_jsn"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy.workspace = true
+jackdaw_geometry = { path = "../jackdaw_geometry" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror = "2"
+
+[lints]
+workspace = true

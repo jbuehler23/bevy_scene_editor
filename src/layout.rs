@@ -6,7 +6,7 @@ use bevy::{
     prelude::*,
     ui_widgets::observe,
 };
-use editor_feathers::{icons::{Icon, IconFont}, menu_bar, panel_header, popover, separator, split_panel, status_bar, text_input, tokens, tree_view::tree_container_drop_observers};
+use jackdaw_feathers::{icons::{Icon, IconFont}, menu_bar, panel_header, popover, separator, split_panel, status_bar, text_input, tokens, tree_view::tree_container_drop_observers};
 
 use crate::{
     EditorEntity,
@@ -137,9 +137,9 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
         BackgroundColor(tokens::TOOLBAR_BG),
         children![
             // Gizmo mode buttons
-            toolbar_button(Icon::Move, "W", GizmoMode::Translate, icon_font.clone()),
-            toolbar_button(Icon::RotateCw, "E", GizmoMode::Rotate, icon_font.clone()),
-            toolbar_button(Icon::Scaling, "R", GizmoMode::Scale, icon_font.clone()),
+            toolbar_button(Icon::Move, "", GizmoMode::Translate, icon_font.clone()),
+            toolbar_button(Icon::RotateCw, "R", GizmoMode::Rotate, icon_font.clone()),
+            toolbar_button(Icon::Scaling, "T", GizmoMode::Scale, icon_font.clone()),
             // Separator
             separator::separator(separator::SeparatorProps::vertical()),
             // Space toggle
@@ -376,19 +376,12 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
         (
             "Transform",
             &[
-                ("W", "Translate mode"),
-                ("E", "Rotate mode"),
-                ("R", "Scale mode"),
+                ("R", "Rotate mode"),
+                ("T", "Scale mode"),
+                ("Esc", "Translate mode (reset)"),
                 ("X", "Toggle local/world"),
                 (".", "Toggle snap"),
-                ("G", "Grab (modal)"),
-                ("S", "Scale (modal)"),
-                ("R", "Rotate (modal)"),
-                ("X/Y/Z", "Axis constraint"),
-                ("Shift+X/Y/Z", "Plane constraint"),
-                ("Click / Enter", "Confirm"),
-                ("Esc / Right-click", "Cancel"),
-                ("Ctrl", "Toggle snap"),
+                ("Ctrl", "Toggle snap (during drag)"),
             ],
         ),
         (
@@ -406,16 +399,17 @@ fn spawn_keybind_help_content(parent: &mut ChildSpawnerCommands) {
         (
             "Brush Edit",
             &[
-                ("`", "Enter/exit edit"),
-                ("1", "Vertex mode"),
-                ("2", "Edge mode"),
-                ("3", "Face mode"),
-                ("4", "Clip mode"),
-                ("G / E", "Grab / Extrude"),
-                ("X/Y/Z", "Constrain axis"),
+                ("1", "Vertex mode (toggle)"),
+                ("2", "Edge mode (toggle)"),
+                ("3", "Face mode (toggle)"),
+                ("4", "Clip mode (toggle)"),
+                ("Shift+Click", "Enter face edit"),
+                ("Click+Drag", "Move selected"),
+                ("Shift+Drag", "Split edge/face (vertex mode)"),
+                ("X/Y/Z", "Constrain axis (during drag)"),
                 ("Delete", "Delete selected"),
                 ("Enter", "Apply clip"),
-                ("Esc", "Cancel / Clear"),
+                ("Esc", "Exit edit / Cancel drag"),
             ],
         ),
         (

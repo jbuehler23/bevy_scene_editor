@@ -15,8 +15,8 @@ use bevy::{
     prelude::*,
     ui_widgets::observe,
 };
-use editor_feathers::tokens;
-use editor_widgets::text_input::TextInput;
+use jackdaw_feathers::tokens;
+use jackdaw_widgets::text_input::TextInput;
 
 use super::{
     AddComponentButton, ComponentPicker, ComponentPickerEntry, ComponentPickerSearch, Inspector,
@@ -24,7 +24,7 @@ use super::{
 
 /// Handle click on the "+" button to open the component picker.
 pub(crate) fn on_add_component_button_click(
-    event: On<editor_feathers::button::ButtonClickEvent>,
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
     add_buttons: Query<&ChildOf, With<AddComponentButton>>,
     existing_pickers: Query<Entity, With<ComponentPicker>>,
     mut commands: Commands,
@@ -41,7 +41,7 @@ pub(crate) fn on_add_component_button_click(
     }
 
     // Toggle: if picker already open, close it
-    for picker in &existing_pickers {
+    if let Some(picker) = existing_pickers.iter().next() {
         commands.entity(picker).despawn();
         return;
     }
@@ -81,7 +81,7 @@ pub(crate) fn on_add_component_button_click(
         // Skip editor-internal types
         let table = registration.type_info().type_path_table();
         let full_path = table.path();
-        if full_path.starts_with("bevy_scene_editor") {
+        if full_path.starts_with("jackdaw") {
             continue;
         }
 
@@ -123,7 +123,7 @@ pub(crate) fn on_add_component_button_click(
     let search_entity = commands
         .spawn((
             ComponentPickerSearch,
-            editor_feathers::text_input::text_input("Search components..."),
+            jackdaw_feathers::text_input::text_input("Search components..."),
             ChildOf(picker),
         ))
         .id();

@@ -1,4 +1,4 @@
-use bevy::{input_focus::InputFocus, prelude::*, ui::UiGlobalTransform};
+use bevy::{input_focus::InputFocus, picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility}, prelude::*, ui::UiGlobalTransform, window::{CursorGrabMode, CursorOptions}};
 
 use crate::{
     commands::{CommandHistory, SetTransform},
@@ -62,6 +62,8 @@ pub struct ActiveDrag {
     pub start_transform: Transform,
     /// Viewport-local cursor position at drag start.
     pub start_viewport_cursor: Vec2,
+    /// Whether this drag was initiated with Ctrl (duplicate-and-move).
+    pub duplicated: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -72,21 +74,19 @@ pub struct ModalTransformPlugin;
 
 impl Plugin for ModalTransformPlugin {
     fn build(&self, app: &mut App) {
+        // ModalTransformState is kept so other systems can check `modal.active.is_some()`.
+        // Modal activate/constrain/update/confirm/cancel/draw systems are disabled
+        // (G/R/S no longer trigger modal transforms — TrenchBroom-style keybinds instead).
+        // The code is preserved in this file for a future Blender keymap option.
         app.init_resource::<ModalTransformState>()
             .init_resource::<ViewportDragState>()
             .add_systems(
                 Update,
                 (
-                    modal_activate,
-                    modal_constrain,
-                    modal_update,
-                    modal_confirm,
-                    modal_cancel,
                     snap_toggle,
                     viewport_drag_detect,
                     viewport_drag_update,
                     viewport_drag_finish,
-                    modal_draw,
                 )
                     .chain(),
             );
@@ -95,8 +95,10 @@ impl Plugin for ModalTransformPlugin {
 
 // ---------------------------------------------------------------------------
 // Modal Activate: G/R/S keys start modal transform
+// (disabled — kept for future Blender keymap option)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_activate(
     keyboard: Res<ButtonInput<KeyCode>>,
     input_focus: Res<InputFocus>,
@@ -106,6 +108,7 @@ fn modal_activate(
     mut modal: ResMut<ModalTransformState>,
     mut gizmo_mode: ResMut<GizmoMode>,
     windows: Query<&Window>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
@@ -162,6 +165,11 @@ fn modal_activate(
         start_cursor: viewport_cursor,
     });
 
+    // Confine cursor during modal transform
+    if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+        cursor_opts.grab_mode = CursorGrabMode::Confined;
+    }
+
     // Sync gizmo mode to match modal operation so the gizmo mode is consistent when modal ends
     match op {
         ModalOp::Grab => *gizmo_mode = GizmoMode::Translate,
@@ -174,6 +182,7 @@ fn modal_activate(
 // Modal Constrain: X/Y/Z keys set axis constraint
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalTransformState>) {
     let Some(ref mut active) = modal.active else {
         return;
@@ -206,6 +215,7 @@ fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalT
 // Modal Update: apply transform changes each frame
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_update(
     modal: Res<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
@@ -299,6 +309,7 @@ fn modal_update(
     }
 }
 
+#[allow(dead_code)]
 fn modal_grab(
     active: &ActiveModal,
     transform: &mut Transform,
@@ -384,12 +395,14 @@ fn modal_grab(
 // Modal Confirm: Left-click or Enter
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_confirm(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut modal: ResMut<ModalTransformState>,
     transforms: Query<&Transform, With<Selected>>,
     mut history: ResMut<CommandHistory>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
 ) {
     let Some(ref active) = modal.active else {
         return;
@@ -410,17 +423,22 @@ fn modal_confirm(
     }
 
     modal.active = None;
+    if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+        cursor_opts.grab_mode = CursorGrabMode::None;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Modal Cancel: Right-click or Esc
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_cancel(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut modal: ResMut<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
 ) {
     let Some(ref active) = modal.active else {
         return;
@@ -436,6 +454,9 @@ fn modal_cancel(
     }
 
     modal.active = None;
+    if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+        cursor_opts.grab_mode = CursorGrabMode::None;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -467,18 +488,40 @@ fn snap_toggle(
 
 fn viewport_drag_detect(
     mouse: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     selection: Res<Selection>,
-    transforms: Query<(&GlobalTransform, &Transform), With<Selected>>,
+    transforms: Query<(&GlobalTransform, &Transform)>,
     gizmo_drag: Res<GizmoDragState>,
     modal: Res<ModalTransformState>,
     gizmo_hover: Res<GizmoHoverState>,
     mut drag_state: ResMut<ViewportDragState>,
+    edit_mode: Res<crate::brush::EditMode>,
+    draw_state: Res<crate::draw_brush::DrawBrushState>,
+    mut ray_cast: MeshRayCast,
+    parents: Query<&ChildOf>,
+    brushes: Query<(), With<jackdaw_jsn::Brush>>,
 ) {
     if modal.active.is_some() || gizmo_drag.active || gizmo_hover.hovered_axis.is_some() {
         return;
+    }
+
+    // Block viewport drag during brush edit mode or draw mode
+    if *edit_mode != crate::brush::EditMode::Object || draw_state.active.is_some() {
+        return;
+    }
+
+    // Shift+click on a brush is always face interaction, not viewport drag
+    // (follows TrenchBroom pattern: modifier keys define non-overlapping input contexts)
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    if shift {
+        if let Some(primary) = selection.primary() {
+            if brushes.contains(primary) {
+                return;
+            }
+        }
     }
 
     if !mouse.just_pressed(MouseButton::Left) {
@@ -488,7 +531,7 @@ fn viewport_drag_detect(
     let Some(primary) = selection.primary() else {
         return;
     };
-    let Ok((global_tf, local_tf)) = transforms.get(primary) else {
+    let Ok((_, local_tf)) = transforms.get(primary) else {
         return;
     };
 
@@ -506,14 +549,34 @@ fn viewport_drag_detect(
         return;
     };
 
-    // Check screen-space proximity to the selected entity
-    let entity_pos = global_tf.translation();
-    let Ok(entity_screen) = camera.world_to_viewport(cam_tf, entity_pos) else {
+    // Raycast to check if click hits the primary selection's mesh
+    let Ok(ray) = camera.viewport_to_world(cam_tf, viewport_cursor) else {
         return;
     };
-    let dist = (entity_screen - viewport_cursor).length();
+    let settings = MeshRayCastSettings::default()
+        .with_visibility(RayCastVisibility::Any);
+    let hits = ray_cast.cast_ray(ray, &settings);
 
-    if dist < 30.0 {
+    let mut hit_primary = false;
+    for (hit_entity, _) in hits {
+        let mut entity = *hit_entity;
+        loop {
+            if entity == primary {
+                hit_primary = true;
+                break;
+            }
+            if let Ok(child_of) = parents.get(entity) {
+                entity = child_of.0;
+            } else {
+                break;
+            }
+        }
+        if hit_primary {
+            break;
+        }
+    }
+
+    if hit_primary {
         drag_state.pending = Some(PendingDrag {
             entity: primary,
             start_transform: *local_tf,
@@ -536,6 +599,8 @@ fn viewport_drag_update(
     snap_settings: Res<SnapSettings>,
     mut drag_state: ResMut<ViewportDragState>,
     mut transforms: Query<&mut Transform>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
+    edit_mode: Res<crate::brush::EditMode>,
 ) {
     if !mouse.pressed(MouseButton::Left) {
         drag_state.pending = None;
@@ -551,15 +616,26 @@ fn viewport_drag_update(
 
     // Check pending -> active promotion
     if let Some(ref pending) = drag_state.pending {
+        // Cancel pending drag if we're no longer in Object mode
+        // (e.g. brush_face_interact entered Face mode on the same click)
+        if *edit_mode != crate::brush::EditMode::Object {
+            drag_state.pending = None;
+            return;
+        }
         let dist = (cursor_pos - pending.click_pos).length();
         if dist > 5.0 {
             let active = ActiveDrag {
                 entity: pending.entity,
                 start_transform: pending.start_transform,
                 start_viewport_cursor: pending.start_viewport_cursor,
+                duplicated: false,
             };
             drag_state.active = Some(active);
             drag_state.pending = None;
+            // Confine cursor during viewport drag
+            if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+                cursor_opts.grab_mode = CursorGrabMode::Confined;
+            }
         } else {
             return;
         }
@@ -573,6 +649,8 @@ fn viewport_drag_update(
         return;
     };
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let alt = keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
 
     let viewport_cursor = window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
         .unwrap_or(cursor_pos);
@@ -582,13 +660,30 @@ fn viewport_drag_update(
     let scale = cam_dist * 0.003;
     let mouse_delta = viewport_cursor - active.start_viewport_cursor;
 
-    // Project camera right/forward onto the horizontal plane
-    let cam_right = cam_tf.right().as_vec3();
-    let cam_forward = cam_tf.forward().as_vec3();
-    let right_h = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
-    let forward_h = Vec3::new(cam_forward.x, 0.0, cam_forward.z).normalize_or_zero();
+    let offset = if alt {
+        // Alt+drag: move along Y axis only (vertical)
+        Vec3::Y * (-mouse_delta.y) * scale
+    } else {
+        // Normal drag: move in XZ plane
+        let cam_right = cam_tf.right().as_vec3();
+        let cam_forward = cam_tf.forward().as_vec3();
+        let right_h = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
+        let forward_h = Vec3::new(cam_forward.x, 0.0, cam_forward.z).normalize_or_zero();
 
-    let offset = right_h * mouse_delta.x * scale + forward_h * (-mouse_delta.y) * scale;
+        let raw = right_h * mouse_delta.x * scale + forward_h * (-mouse_delta.y) * scale;
+
+        if shift {
+            // Shift+drag: restrict to dominant axis
+            if raw.x.abs() > raw.z.abs() {
+                Vec3::new(raw.x, 0.0, 0.0)
+            } else {
+                Vec3::new(0.0, 0.0, raw.z)
+            }
+        } else {
+            raw
+        }
+    };
+
     let snapped_offset = snap_settings.snap_translate_vec3_if(offset, ctrl);
 
     if let Ok(mut transform) = transforms.get_mut(active.entity) {
@@ -605,6 +700,7 @@ fn viewport_drag_finish(
     mut drag_state: ResMut<ViewportDragState>,
     transforms: Query<&Transform>,
     mut history: ResMut<CommandHistory>,
+    mut cursor_query: Query<&mut CursorOptions, With<Window>>,
 ) {
     if !mouse.just_released(MouseButton::Left) {
         return;
@@ -625,12 +721,18 @@ fn viewport_drag_finish(
         history.undo_stack.push(Box::new(cmd));
         history.redo_stack.clear();
     }
+
+    // Release cursor confinement
+    if let Ok(mut cursor_opts) = cursor_query.single_mut() {
+        cursor_opts.grab_mode = CursorGrabMode::None;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Modal Draw: show constraint axis line
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn modal_draw(
     modal: Res<ModalTransformState>,
     mut gizmos: Gizmos,
@@ -673,6 +775,7 @@ fn modal_draw(
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn axis_to_vec3(axis: GizmoAxis) -> Vec3 {
     match axis {
         GizmoAxis::X => Vec3::X,
@@ -681,6 +784,7 @@ fn axis_to_vec3(axis: GizmoAxis) -> Vec3 {
     }
 }
 
+#[allow(dead_code)]
 fn axis_color(axis: GizmoAxis) -> Color {
     match axis {
         GizmoAxis::X => Color::srgb(1.0, 0.2, 0.2),

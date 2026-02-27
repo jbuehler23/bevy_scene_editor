@@ -10,7 +10,7 @@ use super::{
     BrushFaceEntity, BrushMaterialPalette, BrushMeshCache, TextureCacheEntry,
     TextureMaterialCache,
 };
-use bevy_jsn_geometry::{compute_brush_geometry, compute_face_uvs, triangulate_face};
+use jackdaw_geometry::{compute_brush_geometry, compute_face_uvs, triangulate_face};
 
 pub(super) fn setup_default_materials(
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -85,21 +85,21 @@ pub(super) fn set_texture_repeat_mode(
 
 pub(super) fn regenerate_brush_meshes(
     mut commands: Commands,
-    changed_brushes: Query<(Entity, &super::Brush), Changed<super::Brush>>,
-    existing_caches: Query<&BrushMeshCache>,
+    changed_brushes: Query<(Entity, &super::Brush, Option<&Children>), Changed<super::Brush>>,
+    mesh3d_query: Query<(), With<Mesh3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     palette: Res<BrushMaterialPalette>,
     texture_cache: Res<TextureMaterialCache>,
 ) {
-    for (entity, brush) in &changed_brushes {
-        // Despawn old face entities
-        if let Ok(old_cache) = existing_caches.get(entity) {
-            for &face_entity in &old_cache.face_entities {
-                if face_entity == Entity::PLACEHOLDER {
-                    continue;
-                }
-                if let Ok(mut ec) = commands.get_entity(face_entity) {
-                    ec.despawn();
+    for (entity, brush, children) in &changed_brushes {
+        // Despawn all Mesh3d children — covers both BrushFaceEntity children
+        // from previous regen cycles and the runtime mesh child from JsnPlugin.
+        if let Some(children) = children {
+            for child in children.iter() {
+                if mesh3d_query.get(child).is_ok() {
+                    if let Ok(mut ec) = commands.get_entity(child) {
+                        ec.despawn();
+                    }
                 }
             }
         }

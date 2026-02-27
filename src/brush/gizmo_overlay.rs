@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use bevy_jsn::Brush;
+use jackdaw_jsn::Brush;
 use super::{
     BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
 };

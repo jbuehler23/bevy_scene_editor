@@ -4,9 +4,9 @@ use bevy::{
     ui::UiGlobalTransform,
 };
 use bevy::input_focus::InputFocus;
-use bevy_panorbit_camera::PanOrbitCamera;
-use editor_feathers::context_menu::spawn_context_menu;
-use editor_widgets::context_menu::{ContextMenuAction, ContextMenuCloseSet, ContextMenuState};
+use jackdaw_camera::JackdawCameraSettings;
+use jackdaw_feathers::context_menu::spawn_context_menu;
+use jackdaw_widgets::context_menu::{ContextMenuAction, ContextMenuCloseSet, ContextMenuState};
 
 use crate::{
     entity_ops,
@@ -63,20 +63,18 @@ fn handle_viewport_click(
     mut selection: ResMut<Selection>,
     mut input_focus: ResMut<InputFocus>,
     mut commands: Commands,
-    (edit_mode, walk_mode, draw_state): (
+    (edit_mode, draw_state): (
         Res<crate::brush::EditMode>,
-        Res<crate::viewport::WalkModeState>,
         Res<crate::draw_brush::DrawBrushState>,
     ),
     mut ray_cast: MeshRayCast,
 ) {
-    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, walk mode, or draw mode
+    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, or draw mode
     if !mouse.just_pressed(MouseButton::Left)
         || gizmo_drag.active
         || modal.active.is_some()
         || vp_drag.active.is_some()
         || *edit_mode != crate::brush::EditMode::Object
-        || walk_mode.active
         || draw_state.active.is_some()
     {
         return;
@@ -370,7 +368,7 @@ fn on_viewport_context_menu_action(
     event: On<ContextMenuAction>,
     mut commands: Commands,
     selected_transforms: Query<&GlobalTransform, With<Selected>>,
-    mut camera_query: Query<(&mut PanOrbitCamera, &mut Transform)>,
+    mut camera_query: Query<&mut Transform, With<JackdawCameraSettings>>,
 ) {
     match event.action.as_str() {
         "viewport.focus" => {
@@ -380,12 +378,10 @@ fn on_viewport_context_menu_action(
                     let scale = global_tf.compute_transform().scale;
                     let dist = (scale.length() * 3.0).max(5.0);
 
-                    for (mut cam, _) in &mut camera_query {
-                        cam.target_focus = target_pos;
-                        cam.focus = target_pos;
-                        cam.target_radius = dist;
-                        cam.radius = Some(dist);
-                        cam.force_update = true;
+                    for mut transform in &mut camera_query {
+                        let forward = transform.forward().as_vec3();
+                        transform.translation = target_pos - forward * dist;
+                        *transform = transform.looking_at(target_pos, Vec3::Y);
                     }
                 }
             }

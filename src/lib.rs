@@ -31,8 +31,8 @@ use bevy::{
     prelude::*,
 
 };
-use editor_feathers::EditorFeathersPlugin;
-use editor_widgets::menu_bar::MenuAction;
+use jackdaw_feathers::EditorFeathersPlugin;
+use jackdaw_widgets::menu_bar::MenuAction;
 use selection::Selection;
 
 #[derive(Component, Default)]
@@ -53,7 +53,7 @@ impl Plugin for EditorPlugin {
         app.add_plugins((
             FeathersPlugins.build().disable::<InputDispatchPlugin>(),
             EditorFeathersPlugin,
-            bevy_jsn::JsnPlugin,
+            jackdaw_jsn::JsnPlugin,
             inspector::InspectorPlugin,
             hierarchy::HierarchyPlugin,
             viewport::ViewportPlugin,
@@ -133,7 +133,7 @@ fn auto_hide_internal_entities(
 
 fn spawn_layout(
     mut commands: Commands,
-    icon_font: Res<editor_feathers::icons::IconFont>,
+    icon_font: Res<jackdaw_feathers::icons::IconFont>,
 ) {
     commands.spawn((Camera2d, EditorEntity));
     commands.spawn(layout::editor_layout(&icon_font));
@@ -141,13 +141,13 @@ fn spawn_layout(
 
 fn populate_menu(world: &mut World) {
     let menu_bar_entity = world
-        .query_filtered::<Entity, With<editor_feathers::menu_bar::MenuBarRoot>>()
+        .query_filtered::<Entity, With<jackdaw_feathers::menu_bar::MenuBarRoot>>()
         .iter(world)
         .next();
     let Some(menu_bar_entity) = menu_bar_entity else {
         return;
     };
-    editor_feathers::menu_bar::populate_menu_bar(
+    jackdaw_feathers::menu_bar::populate_menu_bar(
         world,
         menu_bar_entity,
         vec![
