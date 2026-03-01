@@ -34,20 +34,12 @@ impl Plugin for ViewportSelectPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box select state
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Default)]
 pub struct BoxSelectState {
     pub active: bool,
     pub start: Vec2,
     pub current: Vec2,
 }
-
-// ---------------------------------------------------------------------------
-// Click-to-select in viewport using position-based proximity
-// ---------------------------------------------------------------------------
 
 fn handle_viewport_click(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -69,8 +61,12 @@ fn handle_viewport_click(
     ),
     mut ray_cast: MeshRayCast,
 ) {
-    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, or draw mode
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, draw mode,
+    // or shift+click (which starts box select)
     if !mouse.just_pressed(MouseButton::Left)
+        || shift
         || gizmo_drag.active
         || modal.active.is_some()
         || vp_drag.active.is_some()
@@ -163,13 +159,9 @@ fn handle_viewport_click(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Box select (drag in viewport)
-// ---------------------------------------------------------------------------
-
 fn handle_box_select(
     mouse: Res<ButtonInput<MouseButton>>,
-    _keyboard: Res<ButtonInput<KeyCode>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
     mut box_state: ResMut<BoxSelectState>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
@@ -193,8 +185,10 @@ fn handle_box_select(
         return;
     };
 
-    // Start box select on middle mouse drag
-    if mouse.just_pressed(MouseButton::Middle) && !box_state.active {
+    let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // Start box select on Shift+LMB drag
+    if shift && mouse.just_pressed(MouseButton::Left) && !box_state.active {
         box_state.active = true;
         box_state.start = cursor_pos;
         box_state.current = cursor_pos;
@@ -204,7 +198,7 @@ fn handle_box_select(
     if box_state.active {
         box_state.current = cursor_pos;
 
-        let released = mouse.just_released(MouseButton::Middle);
+        let released = mouse.just_released(MouseButton::Left);
 
         if released {
             box_state.active = false;
@@ -249,10 +243,6 @@ fn handle_box_select(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Right-click context menu in viewport
-// ---------------------------------------------------------------------------
 
 fn handle_viewport_right_click(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -399,10 +389,6 @@ fn on_viewport_context_menu_action(
         _ => {}
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Walk up the `ChildOf` hierarchy from a raycast hit entity to find the
 /// top-level scene entity (one that appears in `scene_entities`).

@@ -26,10 +26,6 @@ impl Plugin for AlignmentGuidesPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 pub struct EntityAabb {
     pub entity: Entity,
     pub min: Vec3,
@@ -41,10 +37,6 @@ pub struct AlignmentGuideState {
     pub reference_aabbs: Vec<EntityAabb>,
     pub cache_valid: bool,
 }
-
-// ---------------------------------------------------------------------------
-// Drag detection
-// ---------------------------------------------------------------------------
 
 /// Returns true if a translation drag is currently active.
 fn is_translate_drag_active(
@@ -96,10 +88,6 @@ fn dragged_entity_position(
     }
     None
 }
-
-// ---------------------------------------------------------------------------
-// Systems
-// ---------------------------------------------------------------------------
 
 /// Cache AABBs for all non-selected entities at drag start; clear on drag end.
 fn cache_reference_aabbs(

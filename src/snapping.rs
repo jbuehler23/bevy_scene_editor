@@ -15,10 +15,6 @@ impl Plugin for SnappingPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Grid settings
-// ---------------------------------------------------------------------------
-
 #[derive(Resource)]
 pub struct GridSettings {
     pub visible: bool,
@@ -66,10 +62,6 @@ fn sync_grid_settings(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Snap settings
-// ---------------------------------------------------------------------------
-
 pub const GRID_POWER_MIN: i32 = -3;
 pub const GRID_POWER_MAX: i32 = 8;
 
@@ -89,11 +81,11 @@ impl Default for SnapSettings {
     fn default() -> Self {
         let grid_power = -2;
         Self {
-            translate_snap: false,
+            translate_snap: true,
             translate_increment: 2.0_f32.powi(grid_power),
-            rotate_snap: false,
+            rotate_snap: true,
             rotate_increment: 15.0_f32.to_radians(),
-            scale_snap: false,
+            scale_snap: true,
             scale_increment: 0.1,
             grid_power,
         }
@@ -201,10 +193,6 @@ impl SnapSettings {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Grid size keyboard controls
-// ---------------------------------------------------------------------------
 
 fn handle_grid_size_keys(
     keyboard: Res<ButtonInput<KeyCode>>,

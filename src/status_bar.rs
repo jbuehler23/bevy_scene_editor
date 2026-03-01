@@ -70,11 +70,20 @@ fn update_status_center(
     dir_lights: Query<(), (With<DirectionalLight>, Without<EditorEntity>)>,
     spot_lights: Query<(), (With<SpotLight>, Without<EditorEntity>)>,
     cameras: Query<(), (With<Camera3d>, Without<EditorEntity>)>,
+    navmesh_state: Res<crate::navmesh::NavmeshState>,
     mut text_query: Query<&mut Text, With<StatusBarCenter>>,
 ) {
     let Ok(mut text) = text_query.single_mut() else {
         return;
     };
+
+    if !matches!(navmesh_state.status, crate::navmesh::NavmeshStatus::Idle) {
+        let status_str = format!("{}", navmesh_state.status);
+        if text.0 != status_str {
+            text.0 = status_str;
+        }
+        return;
+    }
 
     let total = scene_entities.iter().count();
     let mesh_count = meshes.iter().count();
@@ -130,7 +139,15 @@ fn update_status_right(
                 format!("DRAW BRUSH ({mode_label}): Click to place first corner (Ctrl lock plane, Tab toggle mode) | Esc cancel")
             }
             DrawPhase::DrawingFootprint => {
-                format!("DRAW BRUSH ({mode_label}): Move to size, click to lock footprint | Esc cancel")
+                format!("DRAW BRUSH ({mode_label}): Drag to size rectangle, or release to place polygon vertices | Esc cancel")
+            }
+            DrawPhase::DrawingPolygon => {
+                let n = active.polygon_vertices.len();
+                if n >= 3 {
+                    format!("DRAW BRUSH ({mode_label}): Click to add vertex ({n} placed), click near first to close, Enter close | Backspace undo, Esc cancel")
+                } else {
+                    format!("DRAW BRUSH ({mode_label}): Click to add vertex ({n} placed, need 3+) | Backspace undo, Esc cancel")
+                }
             }
             DrawPhase::ExtrudingDepth => {
                 format!(

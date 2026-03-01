@@ -2,10 +2,6 @@ use bevy::prelude::*;
 
 pub const EPSILON: f32 = 1e-4;
 
-// ---------------------------------------------------------------------------
-// Core types
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Debug, Reflect, Default)]
 pub struct BrushPlane {
     pub normal: Vec3,
@@ -22,10 +18,6 @@ pub struct BrushFaceData {
     pub uv_scale: Vec2,
     pub uv_rotation: f32,
 }
-
-// ---------------------------------------------------------------------------
-// Geometry functions (from brush/geometry.rs)
-// ---------------------------------------------------------------------------
 
 /// Solve the intersection of three planes. Returns None if degenerate.
 pub fn plane_triple_intersection(p1: &BrushPlane, p2: &BrushPlane, p3: &BrushPlane) -> Option<Vec3> {
@@ -182,10 +174,6 @@ pub fn compute_face_uvs(
         })
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// CSG functions (from brush/csg.rs)
-// ---------------------------------------------------------------------------
 
 /// Transform brush face planes from local space to world space.
 pub fn brush_planes_to_world(faces: &[BrushFaceData], rotation: Quat, translation: Vec3) -> Vec<BrushFaceData> {

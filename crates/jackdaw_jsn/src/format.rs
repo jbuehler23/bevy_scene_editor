@@ -18,10 +18,6 @@ pub struct JsnScene {
     pub scene: Vec<JsnEntity>,
 }
 
-// ---------------------------------------------------------------------------
-// Per-entity scene types
-// ---------------------------------------------------------------------------
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct JsnTransform {
     pub translation: Vec3,

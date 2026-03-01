@@ -482,10 +482,6 @@ pub fn tree_container_drop_observers() -> impl Bundle {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Keyboard navigation system
-// ---------------------------------------------------------------------------
-
 /// Keyboard navigation for tree views: arrow keys, Enter, F2, Delete
 pub fn tree_keyboard_navigation(
     keyboard: Res<ButtonInput<KeyCode>>,

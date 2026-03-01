@@ -24,10 +24,6 @@ impl Plugin for AssetBrowserPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Resources
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BrowserViewMode {
     #[default]
@@ -77,10 +73,6 @@ pub struct AssetBrowserContent;
 /// Marker for the breadcrumb bar.
 #[derive(Component)]
 pub struct AssetBrowserBreadcrumb;
-
-// ---------------------------------------------------------------------------
-// Systems
-// ---------------------------------------------------------------------------
 
 fn setup_initial_directory(mut state: ResMut<AssetBrowserState>) {
     // Set the assets directory as the root to match Bevy's asset loading paths.
@@ -267,10 +259,6 @@ fn is_image_file(path: &str) -> bool {
         || path_lower.ends_with(".tga")
         || path_lower.ends_with(".webp")
 }
-
-// ---------------------------------------------------------------------------
-// Layout helper — creates the asset browser panel bundle
-// ---------------------------------------------------------------------------
 
 pub fn asset_browser_panel() -> impl Bundle {
     (

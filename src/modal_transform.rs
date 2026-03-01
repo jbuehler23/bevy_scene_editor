@@ -10,10 +10,6 @@ use crate::{
     EditorEntity,
 };
 
-// ---------------------------------------------------------------------------
-// Resources
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ModalOp {
     Grab,
@@ -66,10 +62,6 @@ pub struct ActiveDrag {
     pub duplicated: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Plugin
-// ---------------------------------------------------------------------------
-
 pub struct ModalTransformPlugin;
 
 impl Plugin for ModalTransformPlugin {
@@ -92,11 +84,6 @@ impl Plugin for ModalTransformPlugin {
             );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Modal Activate: G/R/S keys start modal transform
-// (disabled — kept for future Blender keymap option)
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 fn modal_activate(
@@ -178,10 +165,6 @@ fn modal_activate(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal Constrain: X/Y/Z keys set axis constraint
-// ---------------------------------------------------------------------------
-
 #[allow(dead_code)]
 fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalTransformState>) {
     let Some(ref mut active) = modal.active else {
@@ -210,10 +193,6 @@ fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalT
         };
     }
 }
-
-// ---------------------------------------------------------------------------
-// Modal Update: apply transform changes each frame
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 fn modal_update(
@@ -391,10 +370,6 @@ fn modal_grab(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal Confirm: Left-click or Enter
-// ---------------------------------------------------------------------------
-
 #[allow(dead_code)]
 fn modal_confirm(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -428,10 +403,6 @@ fn modal_confirm(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal Cancel: Right-click or Esc
-// ---------------------------------------------------------------------------
-
 #[allow(dead_code)]
 fn modal_cancel(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -459,12 +430,8 @@ fn modal_cancel(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Snap toggle: period key
-// ---------------------------------------------------------------------------
-
 fn snap_toggle(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mode: Res<GizmoMode>,
     modal: Res<ModalTransformState>,
     mut snap_settings: ResMut<SnapSettings>,
@@ -473,7 +440,7 @@ fn snap_toggle(
         return;
     }
 
-    if keyboard.just_pressed(KeyCode::Period) {
+    if mouse.just_pressed(MouseButton::Middle) {
         match *mode {
             GizmoMode::Translate => snap_settings.translate_snap = !snap_settings.translate_snap,
             GizmoMode::Rotate => snap_settings.rotate_snap = !snap_settings.rotate_snap,
@@ -481,10 +448,6 @@ fn snap_toggle(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Viewport drag detect
-// ---------------------------------------------------------------------------
 
 fn viewport_drag_detect(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -585,10 +548,6 @@ fn viewport_drag_detect(
         });
     }
 }
-
-// ---------------------------------------------------------------------------
-// Viewport drag update
-// ---------------------------------------------------------------------------
 
 fn viewport_drag_update(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -691,10 +650,6 @@ fn viewport_drag_update(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Viewport drag finish
-// ---------------------------------------------------------------------------
-
 fn viewport_drag_finish(
     mouse: Res<ButtonInput<MouseButton>>,
     mut drag_state: ResMut<ViewportDragState>,
@@ -727,10 +682,6 @@ fn viewport_drag_finish(
         cursor_opts.grab_mode = CursorGrabMode::None;
     }
 }
-
-// ---------------------------------------------------------------------------
-// Modal Draw: show constraint axis line
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 fn modal_draw(
@@ -770,10 +721,6 @@ fn modal_draw(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 fn axis_to_vec3(axis: GizmoAxis) -> Vec3 {

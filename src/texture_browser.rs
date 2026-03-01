@@ -24,10 +24,6 @@ impl Plugin for TextureBrowserPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Resources
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Default)]
 pub struct AvailableTextures {
     pub textures: Vec<TextureEntry>,
@@ -41,10 +37,6 @@ pub struct TextureEntry {
     pub image: Handle<Image>,
 }
 
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
 /// Apply a texture to currently selected brush faces.
 #[derive(Event, Debug, Clone)]
 pub struct ApplyTextureToFaces {
@@ -54,10 +46,6 @@ pub struct ApplyTextureToFaces {
 /// Clear texture from currently selected brush faces.
 #[derive(Event, Debug, Clone)]
 pub struct ClearTextureFromFaces;
-
-// ---------------------------------------------------------------------------
-// Systems
-// ---------------------------------------------------------------------------
 
 fn scan_textures(
     mut available: ResMut<AvailableTextures>,
@@ -175,10 +163,6 @@ fn handle_apply_texture(
     history.undo_stack.push(Box::new(cmd));
     history.redo_stack.clear();
 }
-
-// ---------------------------------------------------------------------------
-// Texture browser UI
-// ---------------------------------------------------------------------------
 
 /// Marker for the texture browser panel.
 #[derive(Component)]
@@ -323,10 +307,6 @@ fn update_texture_browser_ui(
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Layout helper
-// ---------------------------------------------------------------------------
 
 pub fn texture_browser_panel() -> impl Bundle {
     (

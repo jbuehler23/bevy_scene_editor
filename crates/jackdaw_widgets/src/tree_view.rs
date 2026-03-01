@@ -76,10 +76,6 @@ pub struct TreeRowVisibilityToggled {
 #[derive(Component)]
 pub struct TreeRowInlineRename;
 
-// ---------------------------------------------------------------------------
-// Index resource: source entity → tree row entity (O(1) lookups)
-// ---------------------------------------------------------------------------
-
 /// Maps source (scene) entities to their corresponding tree row UI entities.
 /// Maintained automatically by systems that react to `TreeNode` additions/removals.
 #[derive(Resource, Default)]
@@ -112,17 +108,9 @@ impl TreeIndex {
 
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Focus tracking
-// ---------------------------------------------------------------------------
-
 /// Tracks which tree row has keyboard focus (rendered with a focus ring).
 #[derive(Resource, Default)]
 pub struct TreeFocused(pub Option<Entity>);
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
 
 /// Event fired when a tree row is clicked
 #[derive(EntityEvent)]
@@ -172,10 +160,6 @@ pub struct TreeRowStartRename {
     /// The source (scene) entity to rename
     pub source_entity: Entity,
 }
-
-// ---------------------------------------------------------------------------
-// Plugin
-// ---------------------------------------------------------------------------
 
 pub struct TreeViewPlugin;
 

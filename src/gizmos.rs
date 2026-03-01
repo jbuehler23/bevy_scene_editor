@@ -10,10 +10,6 @@ use crate::{
     EditorEntity,
 };
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const AXIS_LENGTH: f32 = 1.5;
 const AXIS_TIP_LENGTH: f32 = 0.3;
 const ROTATE_RING_RADIUS: f32 = 1.2;
@@ -30,10 +26,6 @@ const ROTATE_SENSITIVITY: f32 = 0.01;
 const SCALE_SENSITIVITY: f32 = 0.005;
 const MIN_SCALE: f32 = 0.01;
 const AXIS_HIT_DISTANCE: f32 = 20.0;
-
-// ---------------------------------------------------------------------------
-// Resources
-// ---------------------------------------------------------------------------
 
 #[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum GizmoMode {
@@ -72,10 +64,6 @@ pub struct GizmoHoverState {
     pub hovered_axis: Option<GizmoAxis>,
 }
 
-// ---------------------------------------------------------------------------
-// Plugin
-// ---------------------------------------------------------------------------
-
 pub struct TransformGizmosPlugin;
 
 impl Plugin for TransformGizmosPlugin {
@@ -96,10 +84,6 @@ impl Plugin for TransformGizmosPlugin {
             );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Key bindings: W/E/R switch gizmo mode
-// ---------------------------------------------------------------------------
 
 fn handle_gizmo_mode_keys(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -135,10 +119,6 @@ fn handle_gizmo_mode_keys(
         };
     }
 }
-
-// ---------------------------------------------------------------------------
-// Hover detection — find which axis the cursor is near
-// ---------------------------------------------------------------------------
 
 fn handle_gizmo_hover(
     selection: Res<Selection>,
@@ -227,10 +207,6 @@ fn handle_gizmo_hover(
 
     hover.hovered_axis = best_axis;
 }
-
-// ---------------------------------------------------------------------------
-// Drag handling
-// ---------------------------------------------------------------------------
 
 fn handle_gizmo_drag(
     selection: Res<Selection>,
@@ -417,10 +393,6 @@ fn handle_gizmo_drag(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drawing
-// ---------------------------------------------------------------------------
-
 fn draw_gizmos(
     mut gizmos: Gizmos,
     selection: Res<Selection>,
@@ -535,10 +507,6 @@ fn draw_gizmos(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn gizmo_rotation(global_tf: &GlobalTransform, space: &GizmoSpace) -> Quat {
     match space {

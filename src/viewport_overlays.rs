@@ -27,7 +27,7 @@ impl Plugin for ViewportOverlaysPlugin {
                     draw_camera_gizmo,
                 ),
             )
-            .add_systems(Update, draw_coordinate_indicator);
+            .add_systems(Update, (draw_coordinate_indicator, draw_navmesh_region_bounds));
     }
 }
 
@@ -236,10 +236,6 @@ pub(crate) fn collect_descendant_mesh_world_vertices(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Type-specific gizmo systems
-// ---------------------------------------------------------------------------
-
 /// Point light: 3 axis-aligned circles at range radius.
 fn draw_point_light_gizmo(
     mut gizmos: Gizmos,
@@ -353,10 +349,6 @@ fn draw_camera_gizmo(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Coordinate indicator
-// ---------------------------------------------------------------------------
-
 /// Draw a small coordinate indicator showing camera orientation.
 fn draw_coordinate_indicator(
     mut gizmos: Gizmos,
@@ -384,4 +376,16 @@ fn draw_coordinate_indicator(
     gizmos.line(indicator_pos, indicator_pos + Vec3::X * size, Color::srgb(1.0, 0.2, 0.2));
     gizmos.line(indicator_pos, indicator_pos + Vec3::Y * size, Color::srgb(0.2, 1.0, 0.2));
     gizmos.line(indicator_pos, indicator_pos + Vec3::Z * size, Color::srgb(0.2, 0.4, 1.0));
+}
+
+/// Draw wireframe cuboid for NavmeshRegion entities showing their AABB bounds.
+fn draw_navmesh_region_bounds(
+    mut gizmos: Gizmos,
+    regions: Query<&GlobalTransform, With<jackdaw_jsn::NavmeshRegion>>,
+) {
+    let color = Color::srgba(0.2, 0.8, 0.4, 0.6);
+    for global_tf in &regions {
+        let transform = global_tf.compute_transform();
+        gizmos.cube(transform, color);
+    }
 }

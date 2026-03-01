@@ -1,18 +1,10 @@
 use bevy::prelude::*;
 
-// ---------------------------------------------------------------------------
-// EditorCommand trait
-// ---------------------------------------------------------------------------
-
 pub trait EditorCommand: Send + Sync + 'static {
     fn execute(&self, world: &mut World);
     fn undo(&self, world: &mut World);
     fn description(&self) -> &str;
 }
-
-// ---------------------------------------------------------------------------
-// CommandHistory resource
-// ---------------------------------------------------------------------------
 
 #[derive(Resource, Default)]
 pub struct CommandHistory {
@@ -41,10 +33,6 @@ impl CommandHistory {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// CommandGroup — atomic multi-step command
-// ---------------------------------------------------------------------------
 
 pub struct CommandGroup {
     pub commands: Vec<Box<dyn EditorCommand>>,

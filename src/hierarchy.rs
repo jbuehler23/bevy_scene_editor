@@ -81,10 +81,6 @@ impl Plugin for HierarchyPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Classify a scene entity by its primary component for tree display.
 fn classify_entity(world: &World, entity: Entity) -> EntityCategory {
     if world.get::<Camera>(entity).is_some() {
@@ -145,10 +141,6 @@ fn spawn_single_tree_row(
     tree_row_entity
 }
 
-// ---------------------------------------------------------------------------
-// Initial build
-// ---------------------------------------------------------------------------
-
 /// Populate the hierarchy tree with root-level entities only (non-recursive).
 /// Children are spawned lazily when parents are expanded.
 fn rebuild_hierarchy(world: &mut World) {
@@ -194,10 +186,6 @@ fn rebuild_hierarchy(world: &mut World) {
         spawn_single_tree_row(world, entity, container);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Observers: entity lifecycle
-// ---------------------------------------------------------------------------
 
 /// When a new entity gets Transform and has no parent, create a root tree row.
 fn on_root_entity_added(
@@ -426,10 +414,6 @@ fn on_entity_removed(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Observer: lazy child population
-// ---------------------------------------------------------------------------
-
 /// When a tree node is expanded for the first time, spawn tree rows for its children.
 fn on_tree_node_expanded(
     trigger: On<Mutation<TreeNodeExpanded>>,
@@ -505,10 +489,6 @@ fn on_tree_node_expanded(
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Observer: selection
-// ---------------------------------------------------------------------------
 
 /// Handle tree row click → select the source entity.
 /// Plain click on selected entity → deselect. Ctrl+Click → toggle.
@@ -610,10 +590,6 @@ fn on_entity_deselected(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Observers: drag-and-drop reparenting
-// ---------------------------------------------------------------------------
-
 /// Handle tree row dropped → reparent the scene entity with undo support.
 fn on_tree_row_dropped(
     event: On<TreeRowDropped>,
@@ -693,10 +669,6 @@ fn on_tree_row_dropped_on_root(
             .insert(ChildOf(container_entity));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Context menu
-// ---------------------------------------------------------------------------
 
 /// Detect right-click on tree rows and open a context menu.
 fn handle_hierarchy_right_click(
@@ -887,10 +859,6 @@ fn on_context_menu_action(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Visibility toggle
-// ---------------------------------------------------------------------------
-
 /// Toggle entity visibility when the eye icon is clicked.
 fn on_visibility_toggled(
     event: On<TreeRowVisibilityToggled>,
@@ -929,10 +897,6 @@ fn on_visibility_toggled(
         history.redo_stack.clear();
     });
 }
-
-// ---------------------------------------------------------------------------
-// Inline rename
-// ---------------------------------------------------------------------------
 
 /// Cancel inline rename on Escape key.
 fn cancel_inline_rename(
@@ -1121,10 +1085,6 @@ fn on_tree_row_renamed(
     });
 }
 
-// ---------------------------------------------------------------------------
-// Template save dialog
-// ---------------------------------------------------------------------------
-
 /// When the template dialog opens, populate its children slot with a name input.
 fn populate_template_dialog(
     mut commands: Commands,
@@ -1183,10 +1143,6 @@ fn on_template_dialog_action(
         world.resource_mut::<crate::entity_templates::PendingTemplateSave>().entity = None;
     });
 }
-
-// ---------------------------------------------------------------------------
-// Filter system
-// ---------------------------------------------------------------------------
 
 /// Filter hierarchy tree rows based on the filter text input.
 fn apply_hierarchy_filter(

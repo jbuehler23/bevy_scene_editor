@@ -6,12 +6,15 @@ use bevy::{
 };
 
 use crate::{
-    commands::CommandHistory,
-    selection::Selection,
+    commands::{CommandHistory, snapshot_entity},
+    draw_brush::CreateBrushCommand,
+    selection::{Selected, Selection},
     viewport::SceneViewport,
     viewport_util::{point_in_polygon_2d, point_to_segment_dist, window_to_viewport_cursor},
     EditorEntity,
 };
+
+const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 
 use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 use jackdaw_geometry::{compute_face_tangent_axes, point_inside_all_planes, EPSILON};
@@ -20,10 +23,6 @@ use super::{
     SetBrush,
 };
 use super::hull::rebuild_brush_from_vertices;
-
-// ---------------------------------------------------------------------------
-// Edit mode toggle
-// ---------------------------------------------------------------------------
 
 pub(super) fn handle_edit_mode_keys(
     input_focus: Res<InputFocus>,
@@ -129,10 +128,6 @@ pub(super) fn handle_edit_mode_keys(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Face interact (unified select + click-drag)
-// ---------------------------------------------------------------------------
-
 pub(super) fn brush_face_interact(
     mut edit_mode: ResMut<EditMode>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -149,6 +144,7 @@ pub(super) fn brush_face_interact(
     mut drag_state: ResMut<BrushDragState>,
     input_focus: Res<InputFocus>,
     mut history: ResMut<CommandHistory>,
+    mut commands: Commands,
 ) {
     let in_face_edit = matches!(*edit_mode, EditMode::BrushEdit(BrushEditMode::Face));
 
@@ -167,7 +163,7 @@ pub(super) fn brush_face_interact(
     }
 
     if !in_face_edit && drag_state.pending.is_none() && !drag_state.active {
-        // Not in face mode — only handle Shift+click to enter face edit
+        // Not in face mode — only handle Shift+click or Ctrl+Shift+click to enter face edit
         let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         if !shift || !mouse.just_pressed(MouseButton::Left) {
             return;
@@ -198,15 +194,25 @@ pub(super) fn brush_face_interact(
     // Cancel active drag on Escape or right-click
     if drag_state.active {
         if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
-            if let Some(brush_entity) = brush_selection.entity {
-                if let Some(ref start) = drag_state.start_brush {
-                    if let Ok((mut brush, _)) = brushes.get_mut(brush_entity) {
-                        *brush = start.clone();
+            match drag_state.extrude_mode {
+                FaceExtrudeMode::Merge => {
+                    // Revert brush to start state
+                    if let Some(brush_entity) = brush_selection.entity {
+                        if let Some(ref start) = drag_state.start_brush {
+                            if let Ok((mut brush, _)) = brushes.get_mut(brush_entity) {
+                                *brush = start.clone();
+                            }
+                        }
                     }
+                }
+                FaceExtrudeMode::Extend => {
+                    // Original brush was never modified, just clear state
                 }
             }
             drag_state.active = false;
             drag_state.pending = None;
+            drag_state.extend_face_polygon.clear();
+            drag_state.extend_depth = 0.0;
             return;
         }
     }
@@ -214,21 +220,37 @@ pub(super) fn brush_face_interact(
     // Release: commit drag
     if mouse.just_released(MouseButton::Left) {
         if drag_state.active {
-            if let Some(brush_entity) = brush_selection.entity {
-                if let Some(ref start) = drag_state.start_brush {
-                    if let Ok((brush, _)) = brushes.get(brush_entity) {
-                        let cmd = SetBrush {
-                            entity: brush_entity,
-                            old: start.clone(),
-                            new: brush.clone(),
-                            label: "Move brush face".to_string(),
-                        };
-                        history.undo_stack.push(Box::new(cmd));
-                        history.redo_stack.clear();
+            match drag_state.extrude_mode {
+                FaceExtrudeMode::Merge => {
+                    if let Some(brush_entity) = brush_selection.entity {
+                        if let Some(ref start) = drag_state.start_brush {
+                            if let Ok((brush, _)) = brushes.get(brush_entity) {
+                                let cmd = SetBrush {
+                                    entity: brush_entity,
+                                    old: start.clone(),
+                                    new: brush.clone(),
+                                    label: "Move brush face".to_string(),
+                                };
+                                history.undo_stack.push(Box::new(cmd));
+                                history.redo_stack.clear();
+                            }
+                        }
+                    }
+                }
+                FaceExtrudeMode::Extend => {
+                    if drag_state.extend_depth.abs() > MIN_EXTRUDE_DEPTH {
+                        spawn_extruded_brush(
+                            &drag_state.extend_face_polygon,
+                            drag_state.extend_face_normal,
+                            drag_state.extend_depth,
+                            &mut commands,
+                        );
                     }
                 }
             }
             drag_state.active = false;
+            drag_state.extend_face_polygon.clear();
+            drag_state.extend_depth = 0.0;
         }
         drag_state.pending = None;
         return;
@@ -241,14 +263,34 @@ pub(super) fn brush_face_interact(
             if dist > 5.0 {
                 // Promote to active drag
                 if let Some(brush_entity) = brush_selection.entity {
-                    if let Ok((brush, _)) = brushes.get(brush_entity) {
+                    if let Ok((brush, brush_global)) = brushes.get(brush_entity) {
                         drag_state.active = true;
-                        drag_state.start_brush = Some(brush.clone());
                         drag_state.start_cursor = viewport_cursor;
                         // Use the first selected face's normal
                         if let Some(&face_idx) = brush_selection.faces.first() {
                             if face_idx < brush.faces.len() {
                                 drag_state.drag_face_normal = brush.faces[face_idx].plane.normal;
+                            }
+                        }
+
+                        match drag_state.extrude_mode {
+                            FaceExtrudeMode::Merge => {
+                                drag_state.start_brush = Some(brush.clone());
+                            }
+                            FaceExtrudeMode::Extend => {
+                                // Capture world-space face polygon vertices for preview
+                                let (_, brush_rot, _) = brush_global.to_scale_rotation_translation();
+                                drag_state.extend_face_normal = (brush_rot * drag_state.drag_face_normal).normalize();
+                                if let Ok(cache) = brush_caches.get(brush_entity) {
+                                    if let Some(&face_idx) = brush_selection.faces.first() {
+                                        let polygon = &cache.face_polygons[face_idx];
+                                        drag_state.extend_face_polygon = polygon
+                                            .iter()
+                                            .map(|&vi| brush_global.transform_point(cache.vertices[vi]))
+                                            .collect();
+                                    }
+                                }
+                                drag_state.extend_depth = 0.0;
                             }
                         }
                     }
@@ -257,38 +299,68 @@ pub(super) fn brush_face_interact(
         }
     }
 
-    // Continue active drag — adjust face plane distance
+    // Continue active drag
     if drag_state.active {
         let Some(brush_entity) = brush_selection.entity else {
             drag_state.active = false;
             return;
         };
-        let Ok((mut brush, brush_global)) = brushes.get_mut(brush_entity) else {
-            drag_state.active = false;
-            return;
-        };
-        let Some(ref start) = drag_state.start_brush else {
-            drag_state.active = false;
-            return;
-        };
 
-        let brush_pos = brush_global.translation();
-        let Ok(origin_screen) = camera.world_to_viewport(cam_tf, brush_pos) else {
-            return;
-        };
-        let Ok(normal_screen) = camera.world_to_viewport(cam_tf, brush_pos + drag_state.drag_face_normal) else {
-            return;
-        };
-        let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
-        let mouse_delta = viewport_cursor - drag_state.start_cursor;
-        let projected = mouse_delta.dot(screen_dir);
+        match drag_state.extrude_mode {
+            FaceExtrudeMode::Merge => {
+                // Adjust face plane distance (push/pull)
+                let Ok((mut brush, brush_global)) = brushes.get_mut(brush_entity) else {
+                    drag_state.active = false;
+                    return;
+                };
+                let Some(ref start) = drag_state.start_brush else {
+                    drag_state.active = false;
+                    return;
+                };
 
-        let cam_dist = (cam_tf.translation() - brush_pos).length();
-        let drag_amount = projected * cam_dist * 0.003;
+                let brush_pos = brush_global.translation();
+                let Ok(origin_screen) = camera.world_to_viewport(cam_tf, brush_pos) else {
+                    return;
+                };
+                let Ok(normal_screen) = camera.world_to_viewport(cam_tf, brush_pos + drag_state.drag_face_normal) else {
+                    return;
+                };
+                let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
+                let mouse_delta = viewport_cursor - drag_state.start_cursor;
+                let projected = mouse_delta.dot(screen_dir);
 
-        for &face_idx in &brush_selection.faces {
-            if face_idx < start.faces.len() && face_idx < brush.faces.len() {
-                brush.faces[face_idx].plane.distance = start.faces[face_idx].plane.distance + drag_amount;
+                let cam_dist = (cam_tf.translation() - brush_pos).length();
+                let drag_amount = projected * cam_dist * 0.003;
+
+                for &face_idx in &brush_selection.faces {
+                    if face_idx < start.faces.len() && face_idx < brush.faces.len() {
+                        brush.faces[face_idx].plane.distance = start.faces[face_idx].plane.distance + drag_amount;
+                    }
+                }
+            }
+            FaceExtrudeMode::Extend => {
+                // Compute extend depth from mouse projection — don't modify original brush
+                if drag_state.extend_face_polygon.is_empty() {
+                    drag_state.active = false;
+                    return;
+                }
+
+                let face_centroid: Vec3 = drag_state.extend_face_polygon.iter().sum::<Vec3>()
+                    / drag_state.extend_face_polygon.len() as f32;
+                let world_normal = drag_state.extend_face_normal;
+
+                let Ok(origin_screen) = camera.world_to_viewport(cam_tf, face_centroid) else {
+                    return;
+                };
+                let Ok(normal_screen) = camera.world_to_viewport(cam_tf, face_centroid + world_normal) else {
+                    return;
+                };
+                let screen_dir = (normal_screen - origin_screen).normalize_or_zero();
+                let mouse_delta = viewport_cursor - drag_state.start_cursor;
+                let projected = mouse_delta.dot(screen_dir);
+
+                let cam_dist = (cam_tf.translation() - face_centroid).length();
+                drag_state.extend_depth = projected * cam_dist * 0.003;
             }
         }
         return;
@@ -367,8 +439,8 @@ pub(super) fn brush_face_interact(
             brush_selection.temporary_mode = true;
         }
 
-        if ctrl && shift {
-            // Ctrl+Shift+click: toggle multi-select, no drag
+        if in_face_edit && ctrl && !shift {
+            // Ctrl+click in face mode: toggle multi-select, no drag
             if let Some(pos) = brush_selection.faces.iter().position(|&f| f == face_idx) {
                 brush_selection.faces.remove(pos);
             } else {
@@ -376,6 +448,24 @@ pub(super) fn brush_face_interact(
             }
         } else {
             brush_selection.faces = vec![face_idx];
+            // Determine extrude mode:
+            // - From object mode: Shift+click = Extend, Ctrl+Shift+click = Merge
+            // - In face mode: plain drag = Merge, Shift+drag = Extend
+            if !in_face_edit {
+                // Entering from object mode via Shift+click
+                drag_state.extrude_mode = if ctrl && shift {
+                    FaceExtrudeMode::Merge
+                } else {
+                    FaceExtrudeMode::Extend
+                };
+            } else {
+                // Already in face mode
+                drag_state.extrude_mode = if shift {
+                    FaceExtrudeMode::Extend
+                } else {
+                    FaceExtrudeMode::Merge
+                };
+            }
             // Record pending drag
             drag_state.pending = Some(PendingSubDrag { click_pos: cursor_pos });
         }
@@ -385,9 +475,95 @@ pub(super) fn brush_face_interact(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Vertex interact (unified select + click-drag)
-// ---------------------------------------------------------------------------
+fn spawn_extruded_brush(
+    face_polygon_world: &[Vec3],
+    world_normal: Vec3,
+    depth: f32,
+    commands: &mut Commands,
+) {
+    if face_polygon_world.len() < 3 || depth.abs() < MIN_EXTRUDE_DEPTH {
+        return;
+    }
+
+    let face_polygon = face_polygon_world.to_vec();
+    let normal = world_normal;
+
+    commands.queue(move |world: &mut World| {
+        // Compute volume center = face centroid + normal * depth/2
+        let face_centroid: Vec3 = face_polygon.iter().sum::<Vec3>() / face_polygon.len() as f32;
+        let center = face_centroid + normal * depth / 2.0;
+
+        // Build rotation: local Y = face normal (same pattern as spawn_drawn_brush)
+        let rotation = if normal == Vec3::Y {
+            Quat::IDENTITY
+        } else if normal == Vec3::NEG_Y {
+            Quat::from_rotation_x(std::f32::consts::PI)
+        } else {
+            let (u, _v) = compute_face_tangent_axes(normal);
+            let target_mat = Mat3::from_cols(u, normal, -normal.cross(u).normalize());
+            Quat::from_mat3(&target_mat)
+        };
+        let inv_rotation = rotation.inverse();
+
+        // Convert polygon vertices to local space (centered at `center`)
+        let local_verts: Vec<Vec3> = face_polygon
+            .iter()
+            .map(|&v| inv_rotation * (v - center))
+            .collect();
+
+        let Some(mut brush) = Brush::prism(&local_verts, Vec3::Y, depth) else {
+            return;
+        };
+
+        // Apply last-used texture
+        let last_tex = world
+            .resource::<super::LastUsedTexture>()
+            .texture_path
+            .clone();
+        if let Some(ref path) = last_tex {
+            for face in &mut brush.faces {
+                face.texture_path = Some(path.clone());
+            }
+        }
+
+        let entity = world
+            .spawn((
+                Name::new("Brush"),
+                brush,
+                Transform {
+                    translation: center,
+                    rotation,
+                    scale: Vec3::ONE,
+                },
+                Visibility::default(),
+            ))
+            .id();
+
+        // Select the new brush
+        {
+            let selection = world.resource::<Selection>();
+            let old_selected: Vec<Entity> = selection.entities.clone();
+            for &e in &old_selected {
+                if let Ok(mut ec) = world.get_entity_mut(e) {
+                    ec.remove::<Selected>();
+                }
+            }
+            let mut selection = world.resource_mut::<Selection>();
+            selection.entities = vec![entity];
+            world.entity_mut(entity).insert(Selected);
+        }
+
+        // Snapshot for undo
+        let snapshot = snapshot_entity(world, entity);
+        let cmd = CreateBrushCommand {
+            entity,
+            scene_snapshot: snapshot,
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(cmd));
+        history.redo_stack.clear();
+    });
+}
 
 pub(super) fn brush_vertex_interact(
     edit_mode: Res<EditMode>,
@@ -682,10 +858,6 @@ pub(super) fn brush_vertex_interact(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Edge interact (unified select + click-drag)
-// ---------------------------------------------------------------------------
-
 pub(super) fn brush_edge_interact(
     edit_mode: Res<EditMode>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -933,18 +1105,28 @@ pub(crate) struct PendingSubDrag {
     pub click_pos: Vec2,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum FaceExtrudeMode {
+    #[default]
+    Merge,   // Push/pull existing face plane
+    Extend,  // Create new brush from face extrusion
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct BrushDragState {
     pub pending: Option<PendingSubDrag>,
     pub active: bool,
+    pub extrude_mode: FaceExtrudeMode,
     start_brush: Option<Brush>,
     start_cursor: Vec2,
     drag_face_normal: Vec3,
+    /// World-space face polygon vertices for extend preview.
+    pub extend_face_polygon: Vec<Vec3>,
+    /// World-space face normal for extend preview.
+    pub extend_face_normal: Vec3,
+    /// Current extrude depth during extend drag.
+    pub extend_depth: f32,
 }
-
-// ---------------------------------------------------------------------------
-// Drag types (kept above shared helper)
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum VertexDragConstraint {
@@ -970,10 +1152,6 @@ pub(crate) struct VertexDragState {
     /// New vertex position for Shift+drag split (edge midpoint or face center).
     split_vertex: Option<Vec3>,
 }
-
-// ---------------------------------------------------------------------------
-// Shared drag offset computation
-// ---------------------------------------------------------------------------
 
 /// Compute a local-space offset for brush vertex/edge drag based on mouse movement.
 fn compute_brush_drag_offset(
@@ -1017,10 +1195,6 @@ fn compute_brush_drag_offset(
     Some(offset)
 }
 
-// ---------------------------------------------------------------------------
-// Edge drag state
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Default)]
 pub(crate) struct EdgeDragState {
     pub pending: Option<PendingSubDrag>,
@@ -1035,10 +1209,6 @@ pub(crate) struct EdgeDragState {
     /// Per-face polygon indices at drag start (for hull rebuild).
     start_face_polygons: Vec<Vec<usize>>,
 }
-
-// ---------------------------------------------------------------------------
-// Delete selected vertices/edges/faces (Delete key)
-// ---------------------------------------------------------------------------
 
 pub(super) fn handle_brush_delete(
     edit_mode: Res<EditMode>,
@@ -1183,10 +1353,6 @@ pub(super) fn handle_brush_delete(
         _ => {}
     }
 }
-
-// ---------------------------------------------------------------------------
-// Clip mode (4 key — add cutting plane)
-// ---------------------------------------------------------------------------
 
 #[derive(Resource, Default)]
 pub(crate) struct ClipState {

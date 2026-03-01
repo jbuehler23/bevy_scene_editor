@@ -11,10 +11,6 @@ use bevy::prelude::*;
 
 use crate::commands::EditorCommand;
 
-// ---------------------------------------------------------------------------
-// Re-exports from jackdaw_jsn / jackdaw_jsn_geometry
-// ---------------------------------------------------------------------------
-
 pub use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 pub use self::geometry::{compute_brush_geometry, compute_face_tangent_axes};
 pub use self::csg::{brush_planes_to_world, brushes_intersect, subtract_brush, clean_degenerate_faces};
@@ -23,10 +19,6 @@ pub(crate) use self::hull::merge_hull_triangles;
 pub(crate) use self::interaction::{
     BrushDragState, VertexDragState, VertexDragConstraint, EdgeDragState, ClipState,
 };
-
-// ---------------------------------------------------------------------------
-// Editor-only data structures (not serialized / not in jackdaw_jsn)
-// ---------------------------------------------------------------------------
 
 /// Cached computed geometry (NOT serialized, rebuilt from Brush).
 #[derive(Component)]
@@ -95,10 +87,6 @@ pub struct TextureCacheEntry {
     pub material: Handle<StandardMaterial>,
 }
 
-// ---------------------------------------------------------------------------
-// Undo command
-// ---------------------------------------------------------------------------
-
 pub struct SetBrush {
     pub entity: Entity,
     pub old: Brush,
@@ -123,10 +111,6 @@ impl EditorCommand for SetBrush {
         &self.label
     }
 }
-
-// ---------------------------------------------------------------------------
-// Plugin
-// ---------------------------------------------------------------------------
 
 pub struct BrushPlugin;
 

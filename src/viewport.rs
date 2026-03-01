@@ -229,10 +229,6 @@ fn update_camera_enabled(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Camera bookmarks
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Default)]
 pub struct CameraBookmarks {
     pub slots: [Option<CameraBookmark>; 9],
@@ -242,10 +238,6 @@ pub struct CameraBookmarks {
 pub struct CameraBookmark {
     pub transform: Transform,
 }
-
-// ---------------------------------------------------------------------------
-// Camera key handling: F = focus, bookmarks
-// ---------------------------------------------------------------------------
 
 fn handle_camera_keys(
     keyboard: Res<ButtonInput<KeyCode>>,

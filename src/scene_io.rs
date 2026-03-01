@@ -33,7 +33,7 @@ const SKIP_COMPONENT_PATHS: &[&str] = &[
 ];
 
 pub fn should_skip_component(type_path: &str) -> bool {
-    if type_path.starts_with("jackdaw") {
+    if type_path.starts_with("jackdaw::") {
         return true;
     }
     for prefix in SKIP_COMPONENT_PREFIXES {
@@ -60,10 +60,6 @@ pub struct SceneFilePath {
     pub metadata: JsnMetadata,
     pub last_directory: Option<PathBuf>,
 }
-
-// ---------------------------------------------------------------------------
-// File dialogs
-// ---------------------------------------------------------------------------
 
 fn get_window_handle(world: &mut World) -> Option<RawHandleWrapper> {
     world
@@ -112,10 +108,6 @@ fn show_open_dialog(world: &mut World) -> Option<PathBuf> {
 
     bevy::tasks::block_on(dialog.pick_file()).map(|fh| fh.path().to_path_buf())
 }
-
-// ---------------------------------------------------------------------------
-// Save
-// ---------------------------------------------------------------------------
 
 pub fn save_scene(world: &mut World) {
     // If no path is set yet, delegate to Save As
@@ -201,10 +193,6 @@ fn save_scene_inner(world: &mut World) {
         .detach();
 }
 
-// ---------------------------------------------------------------------------
-// Load
-// ---------------------------------------------------------------------------
-
 pub fn load_scene(world: &mut World) {
     let Some(chosen) = show_open_dialog(world) else {
         return;
@@ -270,10 +258,6 @@ pub fn load_scene(world: &mut World) {
     world.resource_mut::<SceneFilePath>().path = Some(path);
 }
 
-// ---------------------------------------------------------------------------
-// New scene
-// ---------------------------------------------------------------------------
-
 pub fn new_scene(world: &mut World) {
     clear_scene_entities(world);
     let mut scene_path = world.resource_mut::<SceneFilePath>();
@@ -281,10 +265,6 @@ pub fn new_scene(world: &mut World) {
     scene_path.metadata = JsnMetadata::default();
     info!("New scene created");
 }
-
-// ---------------------------------------------------------------------------
-// Core: build snapshot (save)
-// ---------------------------------------------------------------------------
 
 /// Build a `Vec<JsnEntity>` from scene entities (named + descendants) using reflection.
 ///
@@ -392,10 +372,6 @@ fn build_scene_snapshot(world: &mut World) -> Vec<JsnEntity> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Core: load from JsnEntity list
-// ---------------------------------------------------------------------------
-
 /// Spawn entities from a `Vec<JsnEntity>` into the world using reflection.
 pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
     let registry = world.resource::<AppTypeRegistry>().clone();
@@ -473,10 +449,6 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
         world.entity_mut(entity).insert(SceneRoot(scene));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Collect the set of all editor entities (those with `EditorEntity` and all their descendants).
 fn collect_editor_entities(world: &mut World) -> HashSet<Entity> {
@@ -612,10 +584,6 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
 fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
-
-// ---------------------------------------------------------------------------
-// Keyboard shortcuts
-// ---------------------------------------------------------------------------
 
 fn handle_scene_io_keys(world: &mut World) {
     let keyboard = world.resource::<ButtonInput<KeyCode>>();

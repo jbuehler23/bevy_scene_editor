@@ -12,6 +12,7 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod layout;
 pub mod modal_transform;
+pub mod navmesh;
 pub mod scene_io;
 pub mod selection;
 pub mod snapping;
@@ -78,6 +79,7 @@ impl Plugin for EditorPlugin {
             draw_brush::DrawBrushPlugin,
             face_grid::FaceGridPlugin,
             alignment_guides::AlignmentGuidesPlugin,
+            navmesh::NavmeshPlugin,
         ))
         .insert_resource(UiTheme(create_dark_theme()))
         .init_resource::<layout::KeybindHelpPopover>()
@@ -88,6 +90,7 @@ impl Plugin for EditorPlugin {
                 send_scroll_events,
                 layout::update_toolbar_highlights,
                 layout::update_space_toggle_label,
+                layout::update_edit_tool_highlights,
                 auto_hide_internal_entities,
             ),
         )
@@ -129,7 +132,6 @@ fn auto_hide_internal_entities(
         }
     }
 }
-
 
 fn spawn_layout(
     mut commands: Commands,
@@ -192,6 +194,8 @@ fn populate_menu(world: &mut World) {
                     ("---", ""),
                     ("add.camera", "Camera"),
                     ("add.empty", "Empty"),
+                    ("---", ""),
+                    ("add.navmesh", "Navmesh Region"),
                 ],
             ),
         ],
@@ -351,6 +355,9 @@ fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
                     entity_ops::EntityTemplate::Empty,
                 );
             });
+        }
+        "add.navmesh" => {
+            navmesh::spawn_navmesh_entity(&mut commands);
         }
         _ => {}
     }

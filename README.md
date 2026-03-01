@@ -6,50 +6,41 @@ cargo run --example basic
 
 ## Keyboard Shortcuts
 
-> **Note:** This project is a work in progress. Not all keybindings listed below are fully implemented yet.
-
 ### Navigation
 
 | Key | Action |
 |-----|--------|
-| MMB | Orbit |
-| Shift+MMB | Pan |
-| Scroll | Zoom |
+| RMB + Drag | Look around |
+| WASD | Move (forward / left / back / right) |
+| Q / E | Move up / down |
+| Shift | Double speed |
+| Scroll | Dolly forward / back |
+| RMB + Scroll | Adjust move speed |
 | F | Focus selected |
-| Shift+F | Walk mode |
-| Numpad . | Orbit to selection |
-| Shift+MMB click | Set orbit center |
 | Ctrl+1-9 | Save camera bookmark |
 | 1-9 | Restore camera bookmark |
 
-### Walk Mode
+### Selection
 
 | Key | Action |
 |-----|--------|
-| W / A / S / D | Move forward / left / back / right |
-| Q / E | Move down / up |
-| Shift | Double speed |
-| Scroll | Adjust speed |
-| Click / Enter | Confirm position |
-| Esc / Right-click | Cancel (restore camera) |
+| LMB | Select entity |
+| Ctrl+Click | Toggle multi-select |
+| Shift+LMB Drag | Box select |
 
 ### Transform
 
 | Key | Action |
 |-----|--------|
-| W | Translate mode |
-| E | Rotate mode |
-| R | Scale mode |
+| Esc | Translate mode |
+| R | Rotate mode |
+| T | Scale mode |
 | X | Toggle local / world space |
-| . (Period) | Toggle snap |
-| G | Grab (modal translate) |
-| S | Scale (modal) |
-| R | Rotate (modal) |
-| X / Y / Z | Axis constraint |
-| Shift+X / Y / Z | Plane constraint (exclude axis) |
-| Click / Enter | Confirm |
-| Esc / Right-click | Cancel |
+| MMB | Toggle snap |
 | Ctrl (during drag) | Toggle snap |
+| Arrows | Nudge (grid-unit move) |
+| Alt+Arrows | 90° rotate |
+| PageUp / PageDown | Nudge vertical |
 
 ### Entity
 
@@ -68,25 +59,26 @@ cargo run --example basic
 
 | Key | Action |
 |-----|--------|
-| ` (Backtick) | Enter / exit brush edit |
 | 1 | Vertex mode |
 | 2 | Edge mode |
 | 3 | Face mode |
 | 4 | Clip mode |
-| G / E | Grab / Extrude |
 | X / Y / Z | Constrain axis |
-| Ctrl+Click | Multi-select |
+| Shift+Click | Multi-select |
 | Delete | Delete selected element |
 | Enter | Apply clip plane |
-| Esc | Cancel / Clear |
+| Esc | Exit brush edit |
 
 ### Brush Draw
 
 | Key | Action |
 |-----|--------|
-| B | Activate draw mode |
-| Tab | Toggle Add / Cut mode |
-| Click | Advance drawing phase |
+| B | Draw brush (add) |
+| C | Draw brush (cut) |
+| Tab | Toggle add / cut mode |
+| Click | Place vertex / advance phase |
+| Enter | Close polygon |
+| Backspace | Remove last vertex |
 | Esc / Right-click | Cancel drawing |
 
 ### View
@@ -96,6 +88,7 @@ cargo run --example basic
 | Ctrl+Shift+W | Toggle wireframe |
 | [ | Decrease grid size |
 | ] | Increase grid size |
+| Ctrl+Alt+Scroll | Change grid size |
 
 ### File
 

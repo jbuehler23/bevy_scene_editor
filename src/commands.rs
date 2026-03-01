@@ -22,10 +22,6 @@ impl Plugin for CommandHistoryPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SetComponentField
-// ---------------------------------------------------------------------------
-
 pub struct SetComponentField {
     pub entity: Entity,
     pub component_type_id: TypeId,
@@ -92,10 +88,6 @@ fn apply_reflected_value(
     }
 }
 
-// ---------------------------------------------------------------------------
-// SetTransform
-// ---------------------------------------------------------------------------
-
 pub struct SetTransform {
     pub entity: Entity,
     pub old_transform: Transform,
@@ -119,10 +111,6 @@ impl EditorCommand for SetTransform {
         "Set transform"
     }
 }
-
-// ---------------------------------------------------------------------------
-// ReparentEntity
-// ---------------------------------------------------------------------------
 
 pub struct ReparentEntity {
     pub entity: Entity,
@@ -154,10 +142,6 @@ fn set_parent(world: &mut World, entity: Entity, parent: Option<Entity>) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// AddComponent — insert a component via reflection
-// ---------------------------------------------------------------------------
 
 pub struct AddComponent {
     pub entity: Entity,
@@ -202,10 +186,6 @@ impl EditorCommand for AddComponent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RemoveComponent — remove a component via reflection (for undo of add)
-// ---------------------------------------------------------------------------
-
 pub struct RemoveComponent {
     pub entity: Entity,
     pub type_id: TypeId,
@@ -244,10 +224,6 @@ impl EditorCommand for RemoveComponent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SpawnEntity — stores bundles of components for undo
-// ---------------------------------------------------------------------------
-
 pub struct SpawnEntity {
     /// The entity that was spawned (set after first execute).
     pub spawned: Option<Entity>,
@@ -269,10 +245,6 @@ impl EditorCommand for SpawnEntity {
         &self.label
     }
 }
-
-// ---------------------------------------------------------------------------
-// DespawnEntity — snapshots entity state via DynamicScene for undo
-// ---------------------------------------------------------------------------
 
 pub struct DespawnEntity {
     pub entity: Entity,
@@ -350,10 +322,6 @@ pub(crate) fn snapshot_rebuild(scene: &DynamicScene) -> DynamicScene {
             .collect(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Keyboard shortcut system
-// ---------------------------------------------------------------------------
 
 fn handle_undo_redo_keys(world: &mut World) {
     let keyboard = world.resource::<ButtonInput<KeyCode>>();

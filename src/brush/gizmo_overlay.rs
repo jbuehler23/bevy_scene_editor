@@ -4,7 +4,7 @@ use jackdaw_jsn::Brush;
 use super::{
     BrushEditMode, BrushMeshCache, BrushSelection, EditMode,
 };
-use super::interaction::{EdgeDragState, VertexDragConstraint, VertexDragState};
+use super::interaction::{BrushDragState, EdgeDragState, FaceExtrudeMode, VertexDragConstraint, VertexDragState};
 
 const EDIT_EDGE_COLOR: Color = Color::srgba(1.0, 0.8, 0.0, 1.0);
 const EDIT_VERTEX_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 1.0);
@@ -18,6 +18,7 @@ pub(super) fn draw_brush_edit_gizmos(
     brushes: Query<&Brush>,
     vertex_drag: Res<VertexDragState>,
     edge_drag: Res<EdgeDragState>,
+    face_drag: Res<BrushDragState>,
     mut gizmos: Gizmos,
 ) {
     let EditMode::BrushEdit(mode) = *edit_mode else {
@@ -96,6 +97,34 @@ pub(super) fn draw_brush_edit_gizmos(
                 let (_, brush_rot, _) = brush_global.to_scale_rotation_translation();
                 let world_normal = brush_rot * normal;
                 gizmos.arrow(world_centroid, world_centroid + world_normal * 0.5, Color::srgb(0.0, 1.0, 1.0));
+            }
+        }
+    }
+
+    // Draw extend mode wireframe preview
+    if face_drag.active && face_drag.extrude_mode == FaceExtrudeMode::Extend {
+        let polygon = &face_drag.extend_face_polygon;
+        let depth = face_drag.extend_depth;
+        let normal = face_drag.extend_face_normal;
+        let offset = normal * depth;
+        let preview_color = Color::srgb(0.0, 1.0, 0.5);
+
+        if polygon.len() >= 3 {
+            // Base polygon edges
+            for i in 0..polygon.len() {
+                let a = polygon[i];
+                let b = polygon[(i + 1) % polygon.len()];
+                gizmos.line(a, b, preview_color);
+            }
+            // Top polygon edges (base + offset)
+            for i in 0..polygon.len() {
+                let a = polygon[i] + offset;
+                let b = polygon[(i + 1) % polygon.len()] + offset;
+                gizmos.line(a, b, preview_color);
+            }
+            // Connecting edges
+            for &v in polygon {
+                gizmos.line(v, v + offset, preview_color);
             }
         }
     }

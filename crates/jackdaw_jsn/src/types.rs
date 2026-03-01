@@ -5,10 +5,6 @@ use bevy::prelude::*;
 // Re-export geometry types so consumers see them from jackdaw_jsn
 pub use jackdaw_geometry::{BrushFaceData, BrushPlane};
 
-// ---------------------------------------------------------------------------
-// Brush component
-// ---------------------------------------------------------------------------
-
 /// Canonical brush data. Serialized. Geometry derived from this.
 #[derive(Component, Reflect, Clone, Debug, Default)]
 #[reflect(Component, Default)]
@@ -79,6 +75,88 @@ impl Brush {
         }
     }
 
+    /// Create a prism brush from a polygon base and extrusion depth along a normal.
+    ///
+    /// `vertices` are the polygon vertices in local space (must be coplanar, convex, ≥3).
+    /// `normal` is the extrusion direction (unit vector, perpendicular to the polygon plane).
+    /// `depth` is the total extrusion distance (can be negative; absolute value is used).
+    ///
+    /// The brush is centered at the origin: the polygon base sits at -|depth|/2 along the normal,
+    /// and the top cap sits at +|depth|/2.
+    ///
+    /// Returns `None` if fewer than 3 vertices or zero depth.
+    pub fn prism(vertices: &[Vec3], normal: Vec3, depth: f32) -> Option<Self> {
+        if vertices.len() < 3 || depth.abs() < 1e-6 {
+            return None;
+        }
+
+        let half_depth = depth.abs() / 2.0;
+        let mut faces = Vec::new();
+
+        // Top cap: faces outward along +normal
+        faces.push(BrushFaceData {
+            plane: BrushPlane {
+                normal,
+                distance: half_depth,
+            },
+            uv_scale: Vec2::ONE,
+            ..default()
+        });
+
+        // Bottom cap: faces outward along -normal
+        faces.push(BrushFaceData {
+            plane: BrushPlane {
+                normal: -normal,
+                distance: half_depth,
+            },
+            uv_scale: Vec2::ONE,
+            ..default()
+        });
+
+        // Side planes: one for each edge of the polygon
+        let centroid: Vec3 = vertices.iter().sum::<Vec3>() / vertices.len() as f32;
+        let n = vertices.len();
+        for i in 0..n {
+            let a = vertices[i];
+            let b = vertices[(i + 1) % n];
+            let edge = b - a;
+            let side_normal = edge.cross(normal).normalize_or_zero();
+            if side_normal.length_squared() < 0.5 {
+                continue;
+            }
+
+            // Ensure outward-facing: dot with (vertex - centroid) should be positive
+            if side_normal.dot(a - centroid) < 0.0 {
+                let side_normal = -side_normal;
+                let distance = side_normal.dot(a);
+                faces.push(BrushFaceData {
+                    plane: BrushPlane {
+                        normal: side_normal,
+                        distance,
+                    },
+                    uv_scale: Vec2::ONE,
+                    ..default()
+                });
+            } else {
+                let distance = side_normal.dot(a);
+                faces.push(BrushFaceData {
+                    plane: BrushPlane {
+                        normal: side_normal,
+                        distance,
+                    },
+                    uv_scale: Vec2::ONE,
+                    ..default()
+                });
+            }
+        }
+
+        if faces.len() < 4 {
+            return None;
+        }
+
+        Some(Self { faces })
+    }
+
     /// Create a sphere brush approximated as an icosahedron (20 triangular faces).
     pub fn sphere(radius: f32) -> Self {
         let phi = (1.0 + 5.0_f32.sqrt()) / 2.0;
@@ -145,19 +223,11 @@ impl Brush {
     }
 }
 
-// ---------------------------------------------------------------------------
-// CustomProperties component
-// ---------------------------------------------------------------------------
-
 #[derive(Component, Reflect, Default, Clone, Debug)]
 #[reflect(Component, Default)]
 pub struct CustomProperties {
     pub properties: BTreeMap<String, PropertyValue>,
 }
-
-// ---------------------------------------------------------------------------
-// PropertyValue enum
-// ---------------------------------------------------------------------------
 
 #[derive(Reflect, Clone, Debug, PartialEq)]
 pub enum PropertyValue {
@@ -204,13 +274,53 @@ impl PropertyValue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// GltfSource component
-// ---------------------------------------------------------------------------
-
 #[derive(Component, Reflect, Clone)]
 #[reflect(Component)]
 pub struct GltfSource {
     pub path: String,
     pub scene_index: usize,
+}
+
+#[derive(Component, Reflect, Clone, Debug)]
+#[reflect(Component, Default)]
+pub struct NavmeshRegion {
+    pub agent_radius: f32,
+    pub agent_height: f32,
+    pub walkable_climb: f32,
+    pub walkable_slope_degrees: f32,
+    pub cell_size_fraction: f32,
+    pub cell_height_fraction: f32,
+    pub min_region_size: u16,
+    pub merge_region_size: u16,
+    pub max_simplification_error: f32,
+    pub max_vertices_per_polygon: u16,
+    pub edge_max_len_factor: u16,
+    pub detail_sample_dist: f32,
+    pub detail_sample_max_error: f32,
+    pub tiling: bool,
+    pub tile_size: u16,
+    pub connection_url: String,
+}
+
+impl Default for NavmeshRegion {
+    fn default() -> Self {
+        Self {
+            agent_radius: 0.6,
+            agent_height: 2.0,
+            walkable_climb: 0.9,
+            walkable_slope_degrees: 45.0,
+            cell_size_fraction: 2.0,
+            cell_height_fraction: 4.0,
+            min_region_size: 8,
+            merge_region_size: 20,
+            max_simplification_error: 1.3,
+            max_vertices_per_polygon: 6,
+            edge_max_len_factor: 8,
+            detail_sample_dist: 6.0,
+            detail_sample_max_error: 1.0,
+            tiling: false,
+            tile_size: 32,
+            connection_url: "http://127.0.0.1:15702".to_string(),
+        }
+    }
 }

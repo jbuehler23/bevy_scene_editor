@@ -20,9 +20,14 @@ serde.workspace = true
 serde_json.workspace = true
 avian3d.workspace = true
 rfd.workspace = true
+bevy_rerecast.workspace = true
+ehttp.workspace = true
+bincode.workspace = true
+base64.workspace = true
+anyhow.workspace = true
 
 [workspace.dependencies]
-bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug"] }
+bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug", "bevy_remote"] }
 jackdaw_jsn = { path = "crates/jackdaw_jsn" }
 jackdaw_geometry = { path = "crates/jackdaw_geometry" }
 bevy_notify = { git = "https://github.com/Freyja-moth/bevy_notify" }
@@ -38,6 +43,11 @@ bevy_ui_text_input = "0.7"
 bevy_easings = "0.18.0"
 avian3d = { version = "0.5", default-features = false, features = ["3d", "parry-f32"] }
 rfd = "0.15"
+bevy_rerecast = { git = "https://github.com/janhohenheim/rerecast", default-features = true }
+ehttp = { version = "0.5", default-features = false, features = ["native-async", "json"] }
+bincode = { version = "2", features = ["serde"], default-features = false }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+anyhow = { version = "1", default-features = false }
 
 # Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
 [workspace.lints.clippy]

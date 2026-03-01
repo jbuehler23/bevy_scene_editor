@@ -1,22 +1,10 @@
 use bevy::color::palettes::tailwind;
 use bevy::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Corner radius
-// ---------------------------------------------------------------------------
-
 pub const CORNER_RADIUS: Val = Val::Px(2.0);
 pub const CORNER_RADIUS_LG: Val = Val::Px(4.0);
 
-// ---------------------------------------------------------------------------
-// Primary / accent colors
-// ---------------------------------------------------------------------------
-
 pub const PRIMARY_COLOR: Srgba = tailwind::BLUE_500;
-
-// ---------------------------------------------------------------------------
-// Background colors (Tailwind Zinc dark palette)
-// ---------------------------------------------------------------------------
 
 /// Root window background
 pub const WINDOW_BG: Color = Color::Srgba(tailwind::ZINC_900);
@@ -37,20 +25,12 @@ pub const TOOLBAR_BUTTON_BG: Color = Color::Srgba(tailwind::ZINC_800);
 /// General background color (for widgets)
 pub const BACKGROUND_COLOR: Srgba = tailwind::ZINC_800;
 
-// ---------------------------------------------------------------------------
-// Borders & separators
-// ---------------------------------------------------------------------------
-
 /// Subtle border / separator
 pub const BORDER_SUBTLE: Color = Color::Srgba(tailwind::ZINC_700);
 /// Strong / emphasized border
 pub const BORDER_STRONG: Color = Color::Srgba(tailwind::ZINC_600);
 /// Standard border color (for widgets)
 pub const BORDER_COLOR: Srgba = tailwind::ZINC_700;
-
-// ---------------------------------------------------------------------------
-// Interactive states
-// ---------------------------------------------------------------------------
 
 /// Hovered row / item background
 pub const HOVER_BG: Color = Color::srgba(1.0, 1.0, 1.0, 0.1);
@@ -69,10 +49,6 @@ pub const CONTAINER_DROP_TARGET_BG: Color = Color::Srgba(Srgba { red: 0.2, green
 /// Tree connection line color
 pub const CONNECTION_LINE: Color = Color::srgba(1.0, 1.0, 1.0, 0.2);
 
-// ---------------------------------------------------------------------------
-// Entity category colors (for hierarchy tree dots)
-// ---------------------------------------------------------------------------
-
 /// Camera entity dot color (blue)
 pub const CATEGORY_CAMERA: Color = Color::srgba(0.286, 0.506, 0.710, 1.0);
 /// Light entity dot color (yellow)
@@ -83,10 +59,6 @@ pub const CATEGORY_MESH: Color = Color::srgba(0.710, 0.537, 0.294, 1.0);
 pub const CATEGORY_SCENE: Color = Color::srgba(0.0, 0.667, 0.733, 1.0);
 /// Generic entity dot color (green)
 pub const CATEGORY_ENTITY: Color = Color::srgba(0.259, 0.725, 0.514, 1.0);
-
-// ---------------------------------------------------------------------------
-// Text colors
-// ---------------------------------------------------------------------------
 
 /// Primary text
 pub const TEXT_PRIMARY: Color = Color::Srgba(tailwind::ZINC_200);
@@ -103,10 +75,6 @@ pub const TEXT_DISPLAY_COLOR: Srgba = tailwind::ZINC_50;
 /// Muted text color
 pub const TEXT_MUTED_COLOR: Srgba = tailwind::ZINC_400;
 
-// ---------------------------------------------------------------------------
-// Inspector type-indicator label colors (muted tints for field labels)
-// ---------------------------------------------------------------------------
-
 /// Numeric (f32/f64/int) field label — green tint
 pub const TYPE_NUMERIC: Color = Color::srgb(0.55, 0.78, 0.55);
 /// Boolean field label — blue tint
@@ -118,18 +86,10 @@ pub const TYPE_ENTITY: Color = Color::Srgba(tailwind::ZINC_300);
 /// Enum field label — purple tint
 pub const TYPE_ENUM: Color = Color::srgb(0.72, 0.55, 0.82);
 
-// ---------------------------------------------------------------------------
-// File browser icon colors
-// ---------------------------------------------------------------------------
-
 /// Directory icon — warm yellow
 pub const DIR_ICON_COLOR: Color = Color::srgb(0.9, 0.8, 0.3);
 /// Generic file icon — grey
 pub const FILE_ICON_COLOR: Color = Color::Srgba(tailwind::ZINC_400);
-
-// ---------------------------------------------------------------------------
-// Text sizes
-// ---------------------------------------------------------------------------
 
 pub const TEXT_SIZE_SM: f32 = 10.0;
 pub const TEXT_SIZE: f32 = 12.0;
@@ -141,10 +101,6 @@ pub const FONT_SM: f32 = TEXT_SIZE_SM;
 pub const FONT_MD: f32 = TEXT_SIZE;
 pub const FONT_LG: f32 = TEXT_SIZE_LG;
 pub const ICON_LG: f32 = 24.0;
-
-// ---------------------------------------------------------------------------
-// Spacing & sizing constants
-// ---------------------------------------------------------------------------
 
 pub const SPACING_XS: f32 = 2.0;
 pub const SPACING_SM: f32 = 4.0;

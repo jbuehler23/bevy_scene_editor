@@ -24,14 +24,11 @@ const EXTRUDE_DEPTH_SENSITIVITY: f32 = 0.003;
 const MIN_FOOTPRINT_SIZE: f32 = 0.01;
 const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DrawPhase {
     PlacingFirstCorner,
     DrawingFootprint,
+    DrawingPolygon,
     ExtrudingDepth,
 }
 
@@ -64,16 +61,20 @@ pub struct ActiveDraw {
     pub cursor_on_plane: Option<Vec3>,
     /// When set, the drawn shape will be CSG-unioned with this brush instead of spawning a new entity.
     pub append_target: Option<Entity>,
+    /// True during press-drag-release rectangle drawing.
+    pub drag_footprint: bool,
+    /// Screen position at initial press (for drag vs click detection).
+    pub press_screen_pos: Option<Vec2>,
+    /// Placed polygon vertices in world space (polygon draw mode).
+    pub polygon_vertices: Vec<Vec3>,
+    /// Current cursor position on plane during polygon mode (for preview edge).
+    pub polygon_cursor: Option<Vec3>,
 }
 
 #[derive(Resource, Default)]
 pub struct DrawBrushState {
     pub active: Option<ActiveDraw>,
 }
-
-// ---------------------------------------------------------------------------
-// Undo command
-// ---------------------------------------------------------------------------
 
 pub struct CreateBrushCommand {
     pub entity: Entity,
@@ -98,10 +99,6 @@ impl EditorCommand for CreateBrushCommand {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Plugin
-// ---------------------------------------------------------------------------
-
 pub struct DrawBrushPlugin;
 
 impl Plugin for DrawBrushPlugin {
@@ -112,6 +109,7 @@ impl Plugin for DrawBrushPlugin {
                 (
                     draw_brush_activate,
                     draw_brush_update,
+                    draw_brush_release,
                     draw_brush_confirm,
                     draw_brush_cancel,
                     draw_brush_preview,
@@ -120,10 +118,6 @@ impl Plugin for DrawBrushPlugin {
             );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Activate: B key enters draw mode
-// ---------------------------------------------------------------------------
 
 fn draw_brush_activate(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -193,12 +187,12 @@ fn draw_brush_activate(
         plane_locked: false,
         cursor_on_plane: None,
         append_target,
+        drag_footprint: false,
+        press_screen_pos: None,
+        polygon_vertices: Vec::new(),
+        polygon_cursor: None,
     });
 }
-
-// ---------------------------------------------------------------------------
-// Update: track surface / project to plane / compute depth
-// ---------------------------------------------------------------------------
 
 fn draw_brush_update(
     mut draw_state: ResMut<DrawBrushState>,
@@ -299,8 +293,21 @@ fn draw_brush_update(
                 active.corner2 = snapped;
             }
         }
+        DrawPhase::DrawingPolygon => {
+            // Project cursor onto drawing plane
+            if let Some(hit) = ray_plane_intersection(ray, active.plane.origin, active.plane.normal)
+            {
+                let snapped = snap_to_plane_grid(hit, &active.plane, &snap_settings, ctrl);
+                active.polygon_cursor = Some(snapped);
+            }
+        }
         DrawPhase::ExtrudingDepth => {
-            let center = (active.corner1 + active.corner2) / 2.0;
+            // Use polygon centroid if in polygon mode, otherwise rectangle midpoint
+            let center = if !active.polygon_vertices.is_empty() {
+                active.polygon_vertices.iter().sum::<Vec3>() / active.polygon_vertices.len() as f32
+            } else {
+                (active.corner1 + active.corner2) / 2.0
+            };
             let cam_dist = (cam_tf.translation() - center).length();
 
             // Project the plane normal to screen space to determine drag direction
@@ -328,9 +335,61 @@ fn draw_brush_update(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Confirm: left-click advances phase or spawns brush
-// ---------------------------------------------------------------------------
+fn draw_brush_release(
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut draw_state: ResMut<DrawBrushState>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
+) {
+    if !mouse.just_released(MouseButton::Left) {
+        return;
+    }
+
+    let Some(ref mut active) = draw_state.active else {
+        return;
+    };
+
+    if active.phase != DrawPhase::DrawingFootprint || !active.drag_footprint {
+        return;
+    }
+
+    let Some(press_pos) = active.press_screen_pos else {
+        return;
+    };
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, _)) = camera_query.single() else {
+        return;
+    };
+    let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query) else {
+        return;
+    };
+
+    let screen_dist = (cursor_pos - press_pos).length();
+    if screen_dist > 5.0 {
+        // Real drag: check footprint size, transition to ExtrudingDepth
+        let delta = active.corner2 - active.corner1;
+        let u_size = delta.dot(active.plane.axis_u).abs();
+        let v_size = delta.dot(active.plane.axis_v).abs();
+        if u_size >= MIN_FOOTPRINT_SIZE && v_size >= MIN_FOOTPRINT_SIZE {
+            active.phase = DrawPhase::ExtrudingDepth;
+            active.extrude_start_cursor = viewport_cursor;
+            active.depth = 0.0;
+        }
+    } else {
+        // Click (no drag): enter polygon mode
+        active.phase = DrawPhase::DrawingPolygon;
+        active.polygon_vertices = vec![active.corner1];
+        active.drag_footprint = false;
+    }
+    active.press_screen_pos = None;
+}
 
 fn draw_brush_confirm(
     mouse: Res<ButtonInput<MouseButton>>,
@@ -369,9 +428,15 @@ fn draw_brush_confirm(
                 active.corner1 = pos;
                 active.corner2 = pos;
                 active.phase = DrawPhase::DrawingFootprint;
+                active.drag_footprint = true;
+                active.press_screen_pos = Some(cursor_pos);
             }
         }
         DrawPhase::DrawingFootprint => {
+            // Only handle non-drag mode (legacy click-move-click path, not used in normal flow)
+            if active.drag_footprint {
+                return;
+            }
             // Enforce minimum size
             let delta = active.corner2 - active.corner1;
             let u_size = delta.dot(active.plane.axis_u).abs();
@@ -383,54 +448,96 @@ fn draw_brush_confirm(
             active.extrude_start_cursor = viewport_cursor;
             active.depth = 0.0;
         }
+        DrawPhase::DrawingPolygon => {
+            if let Some(cursor) = active.polygon_cursor {
+                // Accept all vertices, but skip near-duplicates
+                let too_close = active
+                    .polygon_vertices
+                    .iter()
+                    .any(|&v| (v - cursor).length() < 0.05);
+                if !too_close {
+                    active.polygon_vertices.push(cursor);
+                }
+            }
+        }
         DrawPhase::ExtrudingDepth => {
             if active.depth.abs() < MIN_EXTRUDE_DEPTH {
                 return; // No depth, keep extruding
             }
             let active_owned = active.clone();
-            match active_owned.mode {
-                DrawMode::Add => {
-                    draw_state.active = None;
-                    if active_owned.append_target.is_some() {
-                        append_to_brush(&active_owned, &mut commands);
-                    } else {
-                        spawn_drawn_brush(&active_owned, &mut commands);
-                    }
+            if !active_owned.polygon_vertices.is_empty() {
+                // Polygon mode
+                draw_state.active = None;
+                if active_owned.append_target.is_some() {
+                    append_to_brush(&active_owned, &mut commands);
+                } else {
+                    spawn_polygon_brush(&active_owned, &mut commands);
                 }
-                DrawMode::Cut => {
-                    // Defer clearing draw state to command application so that
-                    // handle_viewport_click still sees draw mode as active during
-                    // this frame and skips the click (preventing entity-despawn races).
-                    subtract_drawn_brush(&active_owned, &mut commands);
-                    commands.queue(|world: &mut World| {
-                        world.resource_mut::<DrawBrushState>().active = None;
-                    });
+            } else {
+                match active_owned.mode {
+                    DrawMode::Add => {
+                        draw_state.active = None;
+                        if active_owned.append_target.is_some() {
+                            append_to_brush(&active_owned, &mut commands);
+                        } else {
+                            spawn_drawn_brush(&active_owned, &mut commands);
+                        }
+                    }
+                    DrawMode::Cut => {
+                        subtract_drawn_brush(&active_owned, &mut commands);
+                        commands.queue(|world: &mut World| {
+                            world.resource_mut::<DrawBrushState>().active = None;
+                        });
+                    }
                 }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cancel: Escape or right-click
-// ---------------------------------------------------------------------------
-
 fn draw_brush_cancel(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut draw_state: ResMut<DrawBrushState>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) {
-    if draw_state.active.is_none() {
+    let Some(ref mut active) = draw_state.active else {
         return;
+    };
+
+    // Polygon mode: Enter closes polygon (via convex hull), Backspace removes last vertex
+    if active.phase == DrawPhase::DrawingPolygon {
+        if keyboard.just_pressed(KeyCode::Enter) {
+            let hull = convex_hull_on_plane(&active.polygon_vertices, &active.plane);
+            if hull.len() >= 3 {
+                active.polygon_vertices = hull;
+                let viewport_cursor = (|| {
+                    let window = windows.single().ok()?;
+                    let cursor_pos = window.cursor_position()?;
+                    let (camera, _) = camera_query.single().ok()?;
+                    window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
+                })();
+                active.phase = DrawPhase::ExtrudingDepth;
+                active.extrude_start_cursor = viewport_cursor.unwrap_or(Vec2::ZERO);
+                active.depth = 0.0;
+                return;
+            }
+        }
+        if keyboard.just_pressed(KeyCode::Backspace) {
+            active.polygon_vertices.pop();
+            if active.polygon_vertices.is_empty() {
+                active.phase = DrawPhase::PlacingFirstCorner;
+            }
+            return;
+        }
     }
+
     if keyboard.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Right) {
         draw_state.active = None;
     }
 }
-
-// ---------------------------------------------------------------------------
-// Preview wireframe using Gizmos
-// ---------------------------------------------------------------------------
 
 const DRAW_COLOR: Color = Color::srgb(1.0, 0.6, 0.0);
 const CUT_COLOR: Color = Color::srgb(1.0, 0.2, 0.2);
@@ -481,51 +588,103 @@ fn draw_brush_preview(
             let mid = (active.corner1 + active.corner2) / 2.0;
             draw_plane_grid(&mut gizmos, &active.plane, mid, &snap_settings);
         }
-        DrawPhase::ExtrudingDepth => {
-            // Cuboid wireframe
-            let base = footprint_corners(active);
-            let offset = active.plane.normal * active.depth;
-            let top: [Vec3; 4] = [
-                base[0] + offset,
-                base[1] + offset,
-                base[2] + offset,
-                base[3] + offset,
-            ];
-            // Base rectangle
-            for i in 0..4 {
-                gizmos.line(base[i], base[(i + 1) % 4], color);
-            }
-            // Top rectangle
-            for i in 0..4 {
-                gizmos.line(top[i], top[(i + 1) % 4], color);
-            }
-            // Connecting edges
-            for i in 0..4 {
-                gizmos.line(base[i], top[i], color);
+        DrawPhase::DrawingPolygon => {
+            let verts = &active.polygon_vertices;
+            let cursor = active.polygon_cursor;
+
+            // Draw all placed vertices as small spheres
+            for &v in verts.iter() {
+                gizmos.sphere(Isometry3d::from_translation(v), 0.04, color);
             }
 
-            // Cut mode: show intersection outlines on affected brushes.
-            // The intersection volume's edges lie on brush surfaces, so they're
-            // visible even when the cutter is inside solid geometry.
-            if active.mode == DrawMode::Cut {
-                let cutter_planes = build_cutter_planes(active);
-                for (brush, brush_tf) in &brushes {
-                    let (_, rotation, translation) = brush_tf.to_scale_rotation_translation();
-                    let world_target = brush_planes_to_world(&brush.faces, rotation, translation);
-                    let mut combined = world_target;
-                    combined.extend_from_slice(&cutter_planes);
-                    let (verts, polys) = compute_brush_geometry(&combined);
-                    if verts.len() < 4 {
-                        continue;
-                    }
-                    for polygon in &polys {
-                        if polygon.len() < 2 {
+            // Compute and draw the convex hull outline
+            let hull = convex_hull_on_plane(verts, &active.plane);
+            if hull.len() >= 2 {
+                for i in 0..hull.len() {
+                    gizmos.line(hull[i], hull[(i + 1) % hull.len()], color);
+                }
+            }
+
+            // Draw preview edge from last placed vertex to cursor
+            if let (Some(&last), Some(cursor_pos)) = (verts.last(), cursor) {
+                gizmos.line(last, cursor_pos, color);
+
+                // Crosshair at cursor
+                let size = 0.15;
+                gizmos.line(
+                    cursor_pos - active.plane.axis_u * size,
+                    cursor_pos + active.plane.axis_u * size,
+                    color,
+                );
+                gizmos.line(
+                    cursor_pos - active.plane.axis_v * size,
+                    cursor_pos + active.plane.axis_v * size,
+                    color,
+                );
+
+                // Draw plane grid centered on cursor
+                draw_plane_grid(&mut gizmos, &active.plane, cursor_pos, &snap_settings);
+            }
+        }
+        DrawPhase::ExtrudingDepth => {
+            let offset = active.plane.normal * active.depth;
+
+            if !active.polygon_vertices.is_empty() {
+                // Polygon prism wireframe
+                let verts = &active.polygon_vertices;
+                let n = verts.len();
+                // Base polygon
+                for i in 0..n {
+                    gizmos.line(verts[i], verts[(i + 1) % n], color);
+                }
+                // Top polygon
+                for i in 0..n {
+                    gizmos.line(verts[i] + offset, verts[(i + 1) % n] + offset, color);
+                }
+                // Connecting edges
+                for &v in verts {
+                    gizmos.line(v, v + offset, color);
+                }
+            } else {
+                // Cuboid wireframe
+                let base = footprint_corners(active);
+                let top: [Vec3; 4] = [
+                    base[0] + offset,
+                    base[1] + offset,
+                    base[2] + offset,
+                    base[3] + offset,
+                ];
+                for i in 0..4 {
+                    gizmos.line(base[i], base[(i + 1) % 4], color);
+                }
+                for i in 0..4 {
+                    gizmos.line(top[i], top[(i + 1) % 4], color);
+                }
+                for i in 0..4 {
+                    gizmos.line(base[i], top[i], color);
+                }
+
+                // Cut mode: show intersection outlines
+                if active.mode == DrawMode::Cut {
+                    let cutter_planes = build_cutter_planes(active);
+                    for (brush, brush_tf) in &brushes {
+                        let (_, rotation, translation) = brush_tf.to_scale_rotation_translation();
+                        let world_target = brush_planes_to_world(&brush.faces, rotation, translation);
+                        let mut combined = world_target;
+                        combined.extend_from_slice(&cutter_planes);
+                        let (verts, polys) = compute_brush_geometry(&combined);
+                        if verts.len() < 4 {
                             continue;
                         }
-                        for i in 0..polygon.len() {
-                            let a = verts[polygon[i]];
-                            let b = verts[polygon[(i + 1) % polygon.len()]];
-                            gizmos.line(a, b, color);
+                        for polygon in &polys {
+                            if polygon.len() < 2 {
+                                continue;
+                            }
+                            for i in 0..polygon.len() {
+                                let a = verts[polygon[i]];
+                                let b = verts[polygon[(i + 1) % polygon.len()]];
+                                gizmos.line(a, b, color);
+                            }
                         }
                     }
                 }
@@ -533,10 +692,6 @@ fn draw_brush_preview(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Brush spawning
-// ---------------------------------------------------------------------------
 
 fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
     let plane = &active.plane;
@@ -627,23 +782,29 @@ fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// CSG union (Append mode)
-// ---------------------------------------------------------------------------
-
 fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
     let Some(target_entity) = active.append_target else {
         return;
     };
 
-    // Build the drawn cuboid's 8 world-space vertices
-    let base = footprint_corners(active);
+    // Build the drawn shape's world-space vertices (prism from polygon or cuboid from footprint)
     let offset = active.plane.normal * active.depth;
-    let mut drawn_verts: Vec<Vec3> = Vec::with_capacity(8);
-    for corner in &base {
-        drawn_verts.push(*corner);
-        drawn_verts.push(*corner + offset);
-    }
+    let drawn_verts: Vec<Vec3> = if !active.polygon_vertices.is_empty() {
+        let mut verts = Vec::with_capacity(active.polygon_vertices.len() * 2);
+        for &v in &active.polygon_vertices {
+            verts.push(v);
+            verts.push(v + offset);
+        }
+        verts
+    } else {
+        let base = footprint_corners(active);
+        let mut verts = Vec::with_capacity(8);
+        for corner in &base {
+            verts.push(*corner);
+            verts.push(*corner + offset);
+        }
+        verts
+    };
 
     commands.queue(move |world: &mut World| {
         use avian3d::parry::math::Point as ParryPoint;
@@ -798,10 +959,6 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Intersect a ray with a plane defined by a point and normal.
 fn ray_plane_intersection(ray: Ray3d, plane_point: Vec3, plane_normal: Vec3) -> Option<Vec3> {
     let denom = ray.direction.dot(plane_normal);
@@ -884,6 +1041,149 @@ fn snap_to_plane_grid(
     plane.axis_u * snapped_u + plane.axis_v * snapped_v + plane.normal * plane_d
 }
 
+/// Compute the 2D convex hull of coplanar points projected onto the drawing plane.
+/// Returns the subset of input points forming the hull, in CCW winding order.
+fn convex_hull_on_plane(points: &[Vec3], plane: &DrawPlane) -> Vec<Vec3> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+
+    // Project to 2D
+    let pts2d: Vec<Vec2> = points
+        .iter()
+        .map(|p| Vec2::new(p.dot(plane.axis_u), p.dot(plane.axis_v)))
+        .collect();
+
+    // Andrew's monotone chain algorithm
+    let mut indexed: Vec<usize> = (0..pts2d.len()).collect();
+    indexed.sort_by(|&a, &b| {
+        pts2d[a]
+            .x
+            .partial_cmp(&pts2d[b].x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                pts2d[a]
+                    .y
+                    .partial_cmp(&pts2d[b].y)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+    });
+
+    let cross =
+        |o: Vec2, a: Vec2, b: Vec2| (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+    let mut hull: Vec<usize> = Vec::new();
+    // Lower hull
+    for &i in &indexed {
+        while hull.len() >= 2
+            && cross(pts2d[hull[hull.len() - 2]], pts2d[hull[hull.len() - 1]], pts2d[i]) <= 0.0
+        {
+            hull.pop();
+        }
+        hull.push(i);
+    }
+    // Upper hull
+    let lower_len = hull.len() + 1;
+    for &i in indexed.iter().rev() {
+        while hull.len() >= lower_len
+            && cross(pts2d[hull[hull.len() - 2]], pts2d[hull[hull.len() - 1]], pts2d[i]) <= 0.0
+        {
+            hull.pop();
+        }
+        hull.push(i);
+    }
+    hull.pop(); // remove duplicate of first point
+
+    hull.iter().map(|&i| points[i]).collect()
+}
+
+/// Spawn a brush from polygon vertices + extrude depth.
+fn spawn_polygon_brush(active: &ActiveDraw, commands: &mut Commands) {
+    if active.polygon_vertices.len() < 3 || active.depth.abs() < MIN_EXTRUDE_DEPTH {
+        return;
+    }
+
+    let polygon = active.polygon_vertices.clone();
+    let normal = active.plane.normal;
+    let depth = active.depth;
+
+    commands.queue(move |world: &mut World| {
+        // Compute centroid + center
+        let centroid: Vec3 = polygon.iter().sum::<Vec3>() / polygon.len() as f32;
+        let center = centroid + normal * depth / 2.0;
+
+        // Build rotation: local Y = plane normal
+        let rotation = if normal == Vec3::Y {
+            Quat::IDENTITY
+        } else if normal == Vec3::NEG_Y {
+            Quat::from_rotation_x(std::f32::consts::PI)
+        } else {
+            let (u, _v) = compute_face_tangent_axes(normal);
+            let target_mat = Mat3::from_cols(u, normal, -normal.cross(u).normalize());
+            Quat::from_mat3(&target_mat)
+        };
+        let inv_rotation = rotation.inverse();
+
+        // Convert polygon vertices to local space
+        let local_verts: Vec<Vec3> = polygon
+            .iter()
+            .map(|&v| inv_rotation * (v - center))
+            .collect();
+
+        let Some(mut brush) = Brush::prism(&local_verts, Vec3::Y, depth) else {
+            return;
+        };
+
+        // Apply last-used texture
+        let last_tex = world
+            .resource::<crate::brush::LastUsedTexture>()
+            .texture_path
+            .clone();
+        if let Some(ref path) = last_tex {
+            for face in &mut brush.faces {
+                face.texture_path = Some(path.clone());
+            }
+        }
+
+        let entity = world
+            .spawn((
+                Name::new("Brush"),
+                brush,
+                Transform {
+                    translation: center,
+                    rotation,
+                    scale: Vec3::ONE,
+                },
+                Visibility::default(),
+            ))
+            .id();
+
+        // Select the new brush
+        {
+            let selection = world.resource::<Selection>();
+            let old_selected: Vec<Entity> = selection.entities.clone();
+            for &e in &old_selected {
+                if let Ok(mut ec) = world.get_entity_mut(e) {
+                    ec.remove::<Selected>();
+                }
+            }
+            let mut selection = world.resource_mut::<Selection>();
+            selection.entities = vec![entity];
+            world.entity_mut(entity).insert(Selected);
+        }
+
+        // Snapshot for undo
+        let snapshot = snapshot_entity(world, entity);
+        let cmd = CreateBrushCommand {
+            entity,
+            scene_snapshot: snapshot,
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(cmd));
+        history.redo_stack.clear();
+    });
+}
+
 /// Compute the 4 world-space corners of the footprint rectangle.
 fn footprint_corners(active: &ActiveDraw) -> [Vec3; 4] {
     let plane = &active.plane;
@@ -904,10 +1204,6 @@ fn footprint_corners(active: &ActiveDraw) -> [Vec3; 4] {
         plane.origin + plane.axis_u * min_u + plane.axis_v * max_v,
     ]
 }
-
-// ---------------------------------------------------------------------------
-// CSG subtraction (Cut mode)
-// ---------------------------------------------------------------------------
 
 /// Build 6 world-space cutter planes from the ActiveDraw cuboid.
 fn build_cutter_planes(active: &ActiveDraw) -> Vec<BrushFaceData> {
@@ -1126,10 +1422,6 @@ fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
         history.redo_stack.clear();
     });
 }
-
-// ---------------------------------------------------------------------------
-// Undo command for CSG subtraction
-// ---------------------------------------------------------------------------
 
 struct SubtractBrushCommand {
     /// Original brushes to restore on undo (entity + snapshot).

@@ -32,10 +32,6 @@ pub struct PendingTemplateSave {
     pub entity: Option<Entity>,
 }
 
-// ---------------------------------------------------------------------------
-// Save entity template
-// ---------------------------------------------------------------------------
-
 pub fn save_entity_template(world: &mut World, name: &str) {
     let selection = world.resource::<Selection>();
     let Some(primary) = selection.primary() else {
@@ -145,10 +141,6 @@ pub fn save_entity_template(world: &mut World, name: &str) {
         })
         .detach();
 }
-
-// ---------------------------------------------------------------------------
-// Instantiate entity template
-// ---------------------------------------------------------------------------
 
 pub fn instantiate_template(world: &mut World, path: &str, position: Vec3) {
     let json = match std::fs::read_to_string(path) {
@@ -290,10 +282,6 @@ pub fn instantiate_template(world: &mut World, path: &str, position: Vec3) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// InstantiateEntities — undo command
-// ---------------------------------------------------------------------------
-
 pub struct InstantiateEntities {
     pub snapshots: Vec<DespawnEntity>,
 }
@@ -317,10 +305,6 @@ impl EditorCommand for InstantiateEntities {
         "Instantiate template"
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Sanitize a filename: allow alphanumeric, hyphens, underscores, spaces.
 fn sanitize_filename(name: &str) -> String {

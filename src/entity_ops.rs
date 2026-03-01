@@ -17,10 +17,6 @@ use crate::{
 };
 use bevy::input_focus::InputFocus;
 
-// ---------------------------------------------------------------------------
-// Component clipboard
-// ---------------------------------------------------------------------------
-
 /// Resource storing copied component data for paste operations.
 #[derive(Resource, Default)]
 pub struct ComponentClipboard {
@@ -40,10 +36,6 @@ impl Plugin for EntityOpsPlugin {
             .add_systems(Update, handle_entity_keys);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Entity templates
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityTemplate {
@@ -69,10 +61,6 @@ impl EntityTemplate {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Create entity
-// ---------------------------------------------------------------------------
 
 pub fn create_entity(
     commands: &mut Commands,
@@ -178,10 +166,6 @@ pub fn create_entity_in_world(world: &mut World, template: EntityTemplate) {
     system_state.apply(world);
 }
 
-// ---------------------------------------------------------------------------
-// GLTF loading
-// ---------------------------------------------------------------------------
-
 pub fn spawn_gltf(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -218,10 +202,6 @@ pub fn spawn_gltf_in_world(world: &mut World, path: &str, position: Vec3) {
     spawn_gltf(&mut commands, &asset_server, path, position, &mut selection);
     system_state.apply(world);
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity
-// ---------------------------------------------------------------------------
 
 pub fn delete_selected(world: &mut World) {
     let selection = world.resource::<Selection>();
@@ -263,10 +243,6 @@ pub fn delete_selected(world: &mut World) {
         history.redo_stack.clear();
     }
 }
-
-// ---------------------------------------------------------------------------
-// Duplicate entity
-// ---------------------------------------------------------------------------
 
 pub fn duplicate_selected(world: &mut World) {
     let selection = world.resource::<Selection>();
@@ -341,10 +317,6 @@ pub fn duplicate_selected(world: &mut World) {
         world.entity_mut(entity).insert(Selected);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Keyboard shortcuts
-// ---------------------------------------------------------------------------
 
 fn handle_entity_keys(world: &mut World) {
     // Don't process entity keys when a text input is focused
@@ -459,10 +431,6 @@ fn handle_entity_keys(world: &mut World) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Transform reset
-// ---------------------------------------------------------------------------
-
 enum TransformReset {
     Position,
     Rotation,
@@ -531,10 +499,6 @@ fn reset_transform_selected(world: &mut World, reset: TransformReset) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Nudge selected entities by offset
-// ---------------------------------------------------------------------------
-
 fn nudge_selected(world: &mut World, offset: Vec3) {
     let selection = world.resource::<Selection>();
     let entities: Vec<Entity> = selection.entities.clone();
@@ -578,10 +542,6 @@ fn nudge_selected(world: &mut World, offset: Vec3) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Rotate selected entities by quaternion
-// ---------------------------------------------------------------------------
-
 fn rotate_selected(world: &mut World, rotation: Quat) {
     let selection = world.resource::<Selection>();
     let entities: Vec<Entity> = selection.entities.clone();
@@ -624,10 +584,6 @@ fn rotate_selected(world: &mut World, rotation: Quat) {
         history.redo_stack.clear();
     }
 }
-
-// ---------------------------------------------------------------------------
-// Copy/Paste components
-// ---------------------------------------------------------------------------
 
 /// Copy all reflected components from the primary selected entity to the clipboard.
 fn copy_components(world: &mut World) {
@@ -729,10 +685,6 @@ fn paste_components(world: &mut World) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Visibility toggle
-// ---------------------------------------------------------------------------
-
 fn toggle_visibility_selected(world: &mut World) {
     let selection = world.resource::<Selection>();
     let entities: Vec<Entity> = selection.entities.clone();
@@ -775,10 +727,6 @@ fn toggle_visibility_selected(world: &mut World) {
         history.redo_stack.clear();
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Convert a filesystem path to a Bevy asset path (relative to the assets directory).
 ///

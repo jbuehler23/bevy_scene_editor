@@ -66,10 +66,6 @@ pub(super) fn spawn_brush_display(
     ));
 }
 
-// ---------------------------------------------------------------------------
-// Brush face properties (UV editing, texture info)
-// ---------------------------------------------------------------------------
-
 /// Tracks the last state we rendered so we only rebuild on change.
 #[derive(Default)]
 pub(super) struct BrushFacePropsState {
