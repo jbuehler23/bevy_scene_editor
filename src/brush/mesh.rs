@@ -7,8 +7,10 @@ use bevy::{
 };
 
 use super::{
-    BrushFaceEntity, BrushMaterialPalette, BrushMeshCache, TextureCacheEntry, TextureMaterialCache,
+    BrushFaceEntity, BrushMaterialPalette, BrushMeshCache, BrushPreview, TextureCacheEntry,
+    TextureMaterialCache,
 };
+use crate::draw_brush::DrawBrushState;
 use jackdaw_geometry::{compute_brush_geometry, compute_face_uvs, triangulate_face};
 
 pub(super) fn setup_default_materials(
@@ -27,10 +29,16 @@ pub(super) fn setup_default_materials(
     ];
     for color in defaults {
         palette.materials.push(materials.add(StandardMaterial {
-            base_color: color.with_alpha(0.75),
-            alpha_mode: AlphaMode::Blend,
+            base_color: color.with_alpha(1.0),
             ..default()
         }));
+        palette
+            .preview_materials
+            .push(materials.add(StandardMaterial {
+                base_color: color.with_alpha(0.75),
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            }));
     }
 }
 
@@ -87,13 +95,21 @@ pub(super) fn set_texture_repeat_mode(
 
 pub(super) fn regenerate_brush_meshes(
     mut commands: Commands,
-    changed_brushes: Query<(Entity, &super::Brush, Option<&Children>), Changed<super::Brush>>,
+    changed_brushes: Query<
+        (
+            Entity,
+            &super::Brush,
+            Option<&Children>,
+            Option<&super::BrushPreview>,
+        ),
+        Changed<super::Brush>,
+    >,
     mesh3d_query: Query<(), With<Mesh3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     palette: Res<BrushMaterialPalette>,
     texture_cache: Res<TextureMaterialCache>,
 ) {
-    for (entity, brush, children) in &changed_brushes {
+    for (entity, brush, children, preview) in &changed_brushes {
         // Despawn all Mesh3d children — covers both BrushFaceEntity children
         // from previous regen cycles and the runtime mesh child from JsnPlugin.
         if let Some(children) = children {
@@ -150,11 +166,16 @@ pub(super) fn regenerate_brush_meshes(
                     .get(path)
                     .map(|e| e.material.clone())
                     .unwrap_or_else(|| palette.materials[0].clone()),
-                None => palette
-                    .materials
-                    .get(face_data.material_index)
-                    .cloned()
-                    .unwrap_or_else(|| palette.materials[0].clone()),
+                None => {
+                    let mats = if preview.is_some() {
+                        &palette.preview_materials
+                    } else {
+                        &palette.materials
+                    };
+                    mats.get(face_data.material_index)
+                        .cloned()
+                        .unwrap_or_else(|| mats[0].clone())
+                }
             };
 
             let face_entity = commands
@@ -178,5 +199,107 @@ pub(super) fn regenerate_brush_meshes(
             face_polygons,
             face_entities,
         });
+    }
+}
+
+/// Reads interaction state each frame and inserts/removes `BrushPreview` on the
+/// appropriate brush entity so downstream systems can swap materials.
+pub(super) fn sync_brush_preview(
+    mut commands: Commands,
+    face_drag: Res<super::BrushDragState>,
+    vertex_drag: Res<super::VertexDragState>,
+    edge_drag: Res<super::EdgeDragState>,
+    draw_state: Res<DrawBrushState>,
+    selection: Res<super::BrushSelection>,
+    existing: Query<Entity, With<BrushPreview>>,
+) {
+    let preview_entity = if face_drag.active || vertex_drag.active || edge_drag.active {
+        selection.entity
+    } else if let Some(ref active) = draw_state.active {
+        active.append_target
+    } else {
+        None
+    };
+
+    for entity in &existing {
+        if Some(entity) != preview_entity {
+            commands.entity(entity).remove::<BrushPreview>();
+        }
+    }
+
+    if let Some(entity) = preview_entity {
+        if existing.get(entity).is_err() {
+            commands.entity(entity).insert(BrushPreview);
+        }
+    }
+}
+
+/// When `BrushPreview` is added or removed, swap materials on existing face entities
+/// without requiring a full mesh regeneration.
+pub(super) fn apply_brush_preview_materials(
+    mut commands: Commands,
+    palette: Res<BrushMaterialPalette>,
+    added: Query<(Entity, &BrushMeshCache), Added<BrushPreview>>,
+    mut removed: RemovedComponents<BrushPreview>,
+    brush_query: Query<&BrushMeshCache>,
+    face_query: Query<&BrushFaceEntity>,
+    brush_data: Query<&super::Brush>,
+) {
+    for (entity, cache) in &added {
+        swap_face_materials(
+            &mut commands,
+            entity,
+            cache,
+            &palette.preview_materials,
+            &face_query,
+            &brush_data,
+        );
+    }
+
+    for entity in removed.read() {
+        if let Ok(cache) = brush_query.get(entity) {
+            swap_face_materials(
+                &mut commands,
+                entity,
+                cache,
+                &palette.materials,
+                &face_query,
+                &brush_data,
+            );
+        }
+    }
+}
+
+fn swap_face_materials(
+    commands: &mut Commands,
+    brush_entity: Entity,
+    cache: &BrushMeshCache,
+    target_materials: &[Handle<StandardMaterial>],
+    face_query: &Query<&BrushFaceEntity>,
+    brush_data: &Query<&super::Brush>,
+) {
+    let Ok(brush) = brush_data.get(brush_entity) else {
+        return;
+    };
+
+    for &face_entity in &cache.face_entities {
+        if face_entity == Entity::PLACEHOLDER {
+            continue;
+        }
+        let Ok(face) = face_query.get(face_entity) else {
+            continue;
+        };
+        let Some(face_data) = brush.faces.get(face.face_index) else {
+            continue;
+        };
+        // Only swap untextured faces
+        if face_data.texture_path.is_some() {
+            continue;
+        }
+        let mat = target_materials
+            .get(face_data.material_index)
+            .cloned()
+            .unwrap_or_else(|| target_materials[0].clone());
+        commands.entity(face_entity).insert(MeshMaterial3d(mat));
     }
 }

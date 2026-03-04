@@ -51,6 +51,35 @@ fn extract_module_group(module_path: Option<&str>) -> String {
     }
 }
 
+/// Trait for annotating components with editor metadata.
+/// Implement this on your components and add `EditorMeta` to `#[reflect(...)]`
+/// to give them descriptions and categories in the component picker.
+pub trait EditorMeta {
+    fn description() -> &'static str {
+        ""
+    }
+    fn category() -> &'static str {
+        ""
+    }
+}
+
+/// Type data for [`EditorMeta`]. Captured at registration time via `FromType<T>`,
+/// so metadata is available without a component instance.
+#[derive(Clone)]
+pub struct ReflectEditorMeta {
+    pub description: &'static str,
+    pub category: &'static str,
+}
+
+impl<T: EditorMeta> bevy::reflect::FromType<T> for ReflectEditorMeta {
+    fn from_type() -> Self {
+        ReflectEditorMeta {
+            description: T::description(),
+            category: T::category(),
+        }
+    }
+}
+
 #[reflect_trait]
 pub trait Displayable {
     fn display(&self, entity: &mut EntityCommands, source: Entity);
@@ -158,6 +187,15 @@ pub(super) struct ComponentPickerSearch;
 #[derive(Component)]
 pub(super) struct ComponentPickerEntry {
     pub(super) short_name: String,
+    pub(super) module_path: String,
+    pub(super) category: String,
+    pub(super) description: String,
+}
+
+/// Section header in the component picker (e.g. "Game", "Bevy", or a custom category)
+#[derive(Component)]
+pub(super) struct ComponentPickerSectionHeader {
+    pub(super) group: String,
 }
 
 /// Tracks which inspector field entity maps to which source entity + component + field path.

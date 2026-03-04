@@ -38,6 +38,10 @@ pub struct BrushFaceEntity {
     pub face_index: usize,
 }
 
+/// Marker: brush is being actively modified and should render with transparent preview materials.
+#[derive(Component)]
+pub struct BrushPreview;
+
 /// Edit mode: Object (default) or brush editing.
 #[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug, Reflect)]
 pub enum EditMode {
@@ -70,6 +74,7 @@ pub struct BrushSelection {
 #[derive(Resource, Default)]
 pub struct BrushMaterialPalette {
     pub materials: Vec<Handle<StandardMaterial>>,
+    pub preview_materials: Vec<Handle<StandardMaterial>>,
 }
 
 /// Remembers the last texture applied via the texture browser, so new brushes inherit it.
@@ -140,7 +145,9 @@ impl Plugin for BrushPlugin {
                     interaction::handle_edit_mode_keys,
                     mesh::ensure_texture_materials,
                     mesh::set_texture_repeat_mode,
+                    mesh::sync_brush_preview,
                     mesh::regenerate_brush_meshes,
+                    mesh::apply_brush_preview_materials,
                     interaction::brush_face_interact,
                     interaction::brush_vertex_interact,
                     interaction::brush_edge_interact,

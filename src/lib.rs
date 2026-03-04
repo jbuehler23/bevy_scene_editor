@@ -10,6 +10,7 @@ pub mod face_grid;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
+pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod layout;
 pub mod modal_transform;
 pub mod navmesh;

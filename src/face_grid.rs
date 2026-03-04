@@ -8,22 +8,34 @@ use crate::selection::Selected;
 use crate::snapping::SnapSettings;
 use crate::viewport_overlays::OverlaySettings;
 
+/// Custom gizmo group for face grid / wireframe overlays, rendered with a depth
+/// bias so lines sit in front of the brush geometry rather than z-fighting.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct FaceGridGizmoGroup;
+
 pub struct FaceGridPlugin;
 
 impl Plugin for FaceGridPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            PostUpdate,
-            (draw_brush_edges, draw_face_grids)
-                .after(bevy::transform::TransformSystems::Propagate)
-                .run_if(in_state(crate::AppState::Editor)),
-        );
+        app.init_gizmo_group::<FaceGridGizmoGroup>()
+            .add_systems(Startup, configure_face_grid_gizmos)
+            .add_systems(
+                PostUpdate,
+                (draw_brush_edges, draw_face_grids)
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .run_if(in_state(crate::AppState::Editor)),
+            );
     }
+}
+
+fn configure_face_grid_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<FaceGridGizmoGroup>();
+    config.depth_bias = -0.0001;
 }
 
 /// Draw wireframe edges on all brushes (bright cyan on selected, subtle grey on unselected).
 fn draw_brush_edges(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<FaceGridGizmoGroup>,
     settings: Res<OverlaySettings>,
     brushes: Query<(&BrushMeshCache, &GlobalTransform, Has<Selected>)>,
 ) {
@@ -56,7 +68,7 @@ fn draw_brush_edges(
 
 /// Draw grid lines on each face of all brushes (brighter on selected).
 fn draw_face_grids(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<FaceGridGizmoGroup>,
     settings: Res<OverlaySettings>,
     snap: Res<SnapSettings>,
     brushes: Query<(&Brush, &BrushMeshCache, &GlobalTransform, Has<Selected>)>,
@@ -69,9 +81,9 @@ fn draw_face_grids(
 
     for (brush, cache, global_tf, is_selected) in &brushes {
         let color = if is_selected {
-            Color::from(tailwind::GRAY_400).with_alpha(0.3)
+            Color::from(tailwind::GRAY_600).with_alpha(0.5)
         } else {
-            Color::from(tailwind::GRAY_500).with_alpha(0.12)
+            Color::from(tailwind::GRAY_600).with_alpha(0.25)
         };
         for (face_idx, face_data) in brush.faces.iter().enumerate() {
             let Some(polygon_indices) = cache.face_polygons.get(face_idx) else {

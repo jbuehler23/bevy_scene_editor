@@ -1700,6 +1700,18 @@ fn join_selected_brushes(
             *brush = new_brush;
         }
 
+        // Deselect entities before despawning so that `On<Remove, Selected>`
+        // observers can clean up tree-row UI while the entities still exist.
+        for &other in &others {
+            if let Ok(mut ec) = world.get_entity_mut(other) {
+                ec.remove::<Selected>();
+            }
+        }
+        {
+            let mut selection = world.resource_mut::<Selection>();
+            selection.entities.retain(|e| !others.contains(e));
+        }
+
         // Despawn others
         for &other in &others {
             if let Ok(entity_mut) = world.get_entity_mut(other) {
