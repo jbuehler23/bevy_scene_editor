@@ -130,6 +130,7 @@ pub mod test_input;
 pub(crate) mod timestamps;
 pub mod tool_ops;
 pub mod transform_ops;
+pub mod type_metadata;
 pub mod ui_align;
 pub mod ui_asset_drop;
 pub mod ui_grouping;
@@ -422,6 +423,7 @@ impl Plugin for EditorCorePlugin {
         .add_plugins((
             viewport_overlays::ViewportOverlaysPlugin,
             schema_preview::SchemaPreviewPlugin,
+            type_metadata::TypeMetadataPlugin,
             view_modes::ViewModesPlugin,
             status_bar::StatusBarPlugin,
             build_panel::BuildPanelPlugin,
