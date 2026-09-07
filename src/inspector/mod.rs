@@ -128,8 +128,7 @@ impl Plugin for InspectorPlugin {
             .add_systems(
                 Update,
                 component_display::sync_inspector_to_selection
-                    .before(category_strip::resolve_active_on_rebuild)
-                    .run_if(in_state(crate::AppState::Editor)),
+                    .before(category_strip::resolve_active_on_rebuild),
             )
             .add_systems(
                 Update,
