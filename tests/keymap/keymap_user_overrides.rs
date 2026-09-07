@@ -932,6 +932,7 @@ fn a_keymap_that_would_not_load_is_said_out_loud() {
     std::fs::write(&path, "{ this is not json").expect("write a corrupt keymap");
 
     let mut app = crate::util::editor_test_app();
+    crate::util::fixed_frame_clock(&mut app);
     crate::enter_editor(&mut app);
 
     let notice = app.world().resource::<jackdaw::status_bar::StatusNotice>();
