@@ -542,14 +542,14 @@ fn scene_open_dedupes_by_path() {
     // The open converted the legacy file, so the surviving tab holds the
     // .bsn path; the second .jsn open deduped against it.
     let bsn_path = path.with_extension("bsn");
-    let canonical = bsn_path.canonicalize().unwrap_or_else(|_| bsn_path.clone());
+    let canonical = dunce::canonicalize(&bsn_path).unwrap_or_else(|_| bsn_path.clone());
     let matches = scenes
         .tabs
         .iter()
         .filter(|t| {
             t.path
                 .as_ref()
-                .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == canonical)
+                .map(|p| dunce::canonicalize(p).unwrap_or_else(|_| p.clone()) == canonical)
                 .unwrap_or(false)
         })
         .count();
