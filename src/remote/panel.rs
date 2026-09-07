@@ -86,8 +86,9 @@ pub fn update_connection_status_indicator(
         }
         ConnectionState::Error(msg) => {
             // Truncate error message for status bar display
-            let short = if msg.len() > 30 {
-                format!("{}...", &msg[..30])
+            let short = if msg.chars().count() > 30 {
+                let head: String = msg.chars().take(30).collect();
+                format!("{head}...")
             } else {
                 msg.clone()
             };

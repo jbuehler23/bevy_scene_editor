@@ -712,9 +712,10 @@ fn refresh_browser_on_change(
             // user can hover to read the full name. Direct attach
             // (no source-component bridge); the data is already in
             // hand at the call site.
-            let is_truncated = entry.file_name.len() > 10;
+            let is_truncated = entry.file_name.chars().count() > 10;
             let display_name = if is_truncated {
-                format!("{}...", &entry.file_name[..8])
+                let head: String = entry.file_name.chars().take(8).collect();
+                format!("{head}...")
             } else {
                 entry.file_name.clone()
             };
