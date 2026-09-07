@@ -30,6 +30,7 @@ use bevy::{
 use jackdaw_feathers::tokens;
 use jackdaw_scene_types::{CanvasGuides, Locked};
 use jackdaw_snap::{SnapLine, SnapRect, snap_edges_2d_with_winners};
+use path_slash::PathExt as _;
 
 use crate::{
     EditorEntity,
@@ -1581,7 +1582,7 @@ fn on_stage_asset_drop(
         StagePick::Miss | StagePick::Empty => None,
     };
     let at = authored_at(cursor, host, stage);
-    let path = path.to_string_lossy().replace('\\', "/");
+    let path = path.to_slash_lossy().into_owned();
     commands.queue(move |world: &mut World| {
         let under = under.filter(|&entity| crate::ui_asset_drop::is_authored(world, entity));
         let landing = crate::ui_asset_drop::classify_drop(world, under, at);

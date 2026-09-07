@@ -40,6 +40,7 @@ use bevy::{
     world_serialization::{WorldAsset, WorldAssetRoot},
 };
 use jackdaw_feathers::tokens;
+use path_slash::PathExt as _;
 
 /// Render layer the thumbnail stage owns exclusively. Layer 0 is the world,
 /// layer 1 is the material preview, and per-viewport grids start at layer 3
@@ -789,7 +790,7 @@ fn decode_thumbnail(bytes: &[u8]) -> Option<Image> {
 
 /// Map an absolute file path to the asset path the `AssetServer` wants.
 fn to_asset_path(path: &Path) -> String {
-    crate::entity_ops::to_asset_path(&path.to_string_lossy().replace('\\', "/"))
+    crate::entity_ops::to_asset_path(&path.to_slash_lossy())
 }
 
 /// Put every entity in the spawned glTF hierarchy on the thumbnail layer.

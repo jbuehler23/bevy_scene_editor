@@ -4872,6 +4872,7 @@ dependencies = [
  "libc",
  "libloading",
  "notify",
+ "path-slash",
  "pathdiff",
  "prettyplease",
  "proc-macro2",
@@ -4986,6 +4987,7 @@ dependencies = [
  "lalrpop-util",
  "log",
  "nom 8.0.0",
+ "path-slash",
  "pathdiff",
  "smol_str",
  "thiserror 2.0.20",
@@ -5262,6 +5264,7 @@ version = "0.19.0"
 dependencies = [
  "bevy",
  "jackdaw_bsn",
+ "path-slash",
  "pathdiff",
 ]
 
@@ -5272,6 +5275,7 @@ dependencies = [
  "jackdaw_env",
  "jackdaw_schema",
  "libc",
+ "path-slash",
  "serde",
  "serde_json",
  "syn 2.0.119",
@@ -5379,6 +5383,7 @@ dependencies = [
  "bevy",
  "bevy_math",
  "noise",
+ "path-slash",
  "rand 0.10.2",
 ]
 
@@ -7513,6 +7518,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "path-slash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
+
+[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9273,7 +9284,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

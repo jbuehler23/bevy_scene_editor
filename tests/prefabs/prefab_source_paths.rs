@@ -119,8 +119,8 @@ fn a_saved_scene_names_its_prefab_relative_to_itself() {
     jackdaw::prefab::operators::spawn_instance(app.world_mut(), &prefab, Vec3::ZERO);
 
     assert_eq!(
-        live_source(&app),
-        prefab.to_string_lossy(),
+        std::path::PathBuf::from(live_source(&app)),
+        prefab,
         "in memory the source is the file the editor opened"
     );
     assert!(jackdaw::scene_io::save_scene(app.world_mut()), "saved");
@@ -149,8 +149,8 @@ fn reopening_the_saved_scene_rebuilds_the_inherited_tree() {
         "the relative reference resolved and the inherited child spawned"
     );
     assert_eq!(
-        live_source(&reopened),
-        prefab.to_string_lossy(),
+        std::path::PathBuf::from(live_source(&reopened)),
+        prefab,
         "opening puts the file back, so the cache and the inspector can be asked"
     );
 }

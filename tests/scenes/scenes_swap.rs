@@ -1,5 +1,6 @@
 use bevy::prelude::Name;
 use jackdaw::scenes::{SceneTab, Scenes, TabContent};
+use path_slash::PathExt as _;
 
 #[test]
 fn scenes_default_is_empty() {
@@ -1741,7 +1742,7 @@ fn a_refused_legacy_scene_leaves_no_converted_file_behind() {
                 }}
             }}]
         }}"#,
-            base.to_string_lossy().replace('\\', "/")
+            base.to_slash_lossy()
         ),
     )
     .unwrap();

@@ -15,6 +15,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+use path_slash::PathExt as _;
+
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let recipe = out_dir.join("recipe");
@@ -303,8 +305,8 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
             let rel = path
                 .strip_prefix(root)
                 .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
+                .to_slash_lossy()
+                .into_owned();
             out.push((rel, path));
         }
     }

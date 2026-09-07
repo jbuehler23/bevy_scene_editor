@@ -14,6 +14,7 @@ bevy = { version = "0.19", default-features = false, optional = true, features =
     "std",
     "bevy_asset",
 ] }
+path-slash = { workspace = true, optional = true }
 
 [features]
 default = ["render", "procgen"]
@@ -29,6 +30,7 @@ procgen = ["dep:noise", "dep:rand"]
 # wasm32-unknown-unknown.
 render = [
     "dep:bevy",
+    "dep:path-slash",
     "bevy/bevy_pbr",
     "bevy/bevy_render",
     "bevy/bevy_image",

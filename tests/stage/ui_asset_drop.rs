@@ -18,6 +18,7 @@ use jackdaw::commands::CommandHistory;
 use jackdaw::viewport_2d::{Viewport2dPanelHost, build_viewport_2d_panel};
 use jackdaw_feathers::tokens::TOOLBAR_HEIGHT;
 use jackdaw_scene_types::UiSceneRoot;
+use path_slash::PathExt as _;
 
 const REFERENCE: UVec2 = UVec2::new(2400, 1200);
 const DROPPED: &str = "textures/dropped.png";
@@ -168,14 +169,7 @@ fn drop_path_at(app: &mut App, panel: Entity, authored: Vec2, path: std::path::P
 /// The asset path the node's texture was loaded from.
 fn texture_path(app: &App, entity: Entity) -> Option<String> {
     let image = app.world().get::<ImageNode>(entity)?;
-    Some(
-        image
-            .image
-            .path()?
-            .path()
-            .to_string_lossy()
-            .replace('\\', "/"),
-    )
+    Some(image.image.path()?.path().to_slash_lossy().into_owned())
 }
 
 fn undo_depth(app: &App) -> usize {

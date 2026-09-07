@@ -3,6 +3,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use path_slash::PathExt as _;
+
 use crate::model_thumbnail::is_model_path;
 
 pub(crate) const PREVIEW_MODELS_DIR: &str = "jackdaw_preview_models";
@@ -183,7 +185,7 @@ fn relative_to_assets(assets_dir: &Path, path: &Path) -> Option<String> {
         if rel.as_os_str().is_empty() {
             None
         } else {
-            Some(rel.to_string_lossy().replace('\\', "/"))
+            Some(rel.to_slash_lossy().into_owned())
         }
     })
 }

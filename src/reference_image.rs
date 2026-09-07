@@ -5,6 +5,7 @@ use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use bevy::window::{PrimaryWindow, RawHandleWrapper};
+use path_slash::PathExt as _;
 use rfd::AsyncFileDialog;
 
 use crate::selection::Selection;
@@ -159,7 +160,7 @@ fn poll_reference_image_pick(world: &mut World) {
     let Some(file_handle) = result else {
         return;
     };
-    let path = file_handle.path().to_string_lossy().replace('\\', "/");
+    let path = file_handle.path().to_slash_lossy().into_owned();
     spawn_reference_image_in_world(world, &path, Vec3::ZERO);
 }
 

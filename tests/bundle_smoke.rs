@@ -9,6 +9,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use path_slash::PathExt as _;
+
 use jackdaw::project_build::build_project_dylib;
 use jackdaw::project_build::shim::ShimSpec;
 use jackdaw::sdk_paths::SdkPaths;
@@ -130,10 +132,7 @@ fn extension_builds_against_a_staged_bundle_sdk() {
             bevy = {{ version = "0.19", default-features = false }}
             jackdaw_extension = {{ path = "{}" }}
             "#,
-            root.join("crates/jackdaw_extension")
-                .display()
-                .to_string()
-                .replace('\\', "/")
+            root.join("crates/jackdaw_extension").to_slash_lossy()
         ),
     )
     .expect("write extension Cargo.toml");

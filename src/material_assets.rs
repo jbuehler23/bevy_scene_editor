@@ -928,6 +928,7 @@ fn delete_material(world: &mut World, name: &str) {
 mod tests {
     use super::*;
     use bevy::asset::AssetPlugin;
+    use path_slash::PathExt as _;
 
     fn material_app() -> App {
         let mut app = App::new();
@@ -957,7 +958,7 @@ mod tests {
         let server = app.world().resource::<AssetServer>();
         handle
             .and_then(|h| server.get_path(h.id()))
-            .map(|p| p.to_string().replace('\\', "/"))
+            .map(|p| p.path().to_slash_lossy().into_owned())
     }
 
     fn round_trip(app: &mut App, material: StandardMaterial) -> StandardMaterial {
