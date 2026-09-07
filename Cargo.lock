@@ -5334,6 +5334,7 @@ dependencies = [
  "dunce",
  "glam 0.32.1",
  "jackdaw_geometry",
+ "path-slash",
  "rand 0.10.2",
  "serde",
  "serde_json",

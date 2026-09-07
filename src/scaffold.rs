@@ -2147,7 +2147,7 @@ mod tests {
         assert_eq!(plan.package_name, "game");
         assert_eq!(
             dunce::canonicalize(&plan.package_dir).unwrap(),
-            dunce::canonicalize(&root.join("game")).unwrap()
+            dunce::canonicalize(root.join("game")).unwrap()
         );
         // The settings file belongs to the folder the user opened, not
         // to the member; the member is recorded inside it instead.
