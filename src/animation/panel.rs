@@ -528,7 +528,7 @@ fn update_library_files(
         files: library.len(),
         chosen: state.file.clone(),
     };
-    if last.as_ref() == Some(&signature) {
+    if last.as_ref() == Some(&signature) && all_filled(&lists) {
         return;
     }
     *last = Some(signature);
@@ -568,6 +568,18 @@ fn update_library_files(
     }
 }
 
+/// Whether every list still holds what it was last filled with.
+///
+/// A list the dock rebuilt, or one whose rows landed after their parent was
+/// gone, comes back empty under an unchanged signature, and an empty list is
+/// never what a fill leaves behind: even a library with nothing in it gets a
+/// heading and a hint.
+fn all_filled<M: Component>(lists: &Query<(Entity, Option<&Children>), With<M>>) -> bool {
+    lists
+        .iter()
+        .all(|(_, children)| children.is_some_and(|kids| !kids.is_empty()))
+}
+
 /// What the clip list was last drawn for.
 #[derive(PartialEq)]
 struct ClipListSignature {
@@ -593,7 +605,7 @@ fn update_library_clips(
         clips: file.map_or(0, |file| file.clips.len()),
         filter: state.filter.clone(),
     };
-    if last.as_ref() == Some(&signature) {
+    if last.as_ref() == Some(&signature) && all_filled(&lists) {
         return;
     }
     *last = Some(signature);
