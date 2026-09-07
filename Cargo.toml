@@ -220,6 +220,7 @@ bevy = { version = "0.19", features = [
     "file_watcher",
     "reflect_documentation",
     "reflect_functions",
+    "system_font_discovery",
 ] }
 jackdaw_jsn = { version = "0.19.0", path = "crates/jackdaw_jsn" }
 jackdaw_geometry = { version = "0.19.0", path = "crates/jackdaw_geometry" }
