@@ -452,3 +452,65 @@ fn indexing_settles_without_reloading_the_gltf() {
         "a settled project must not reload its glTFs"
     );
 }
+
+/// Files the Library tab's file column offers, by the select call each row makes.
+fn listed_files(app: &mut App) -> Vec<String> {
+    let mut rows = app
+        .world_mut()
+        .query::<&jackdaw_feathers::button::ButtonOperatorCall>();
+    rows.iter(app.world())
+        .filter(|call| call.id == "animation.library.select")
+        .flat_map(|call| call.params.iter())
+        .filter_map(|(key, value)| match value {
+            PropertyValue::String(path) if key == "file" => Some(path.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[track_caller]
+fn settle_until_listed(app: &mut App, what: &str) {
+    for _ in 0..600 {
+        if listed_files(app).iter().any(|path| path == ANIMATED_FILE) {
+            return;
+        }
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("{what} never happened; listed: {:?}", listed_files(app));
+}
+
+fn open_library_tab(app: &mut App) {
+    call(
+        app,
+        "window.open",
+        &[("window_id", "jackdaw.timeline".into())],
+    );
+    call(app, "animation.panel.tab", &[("tab", "library".into())]);
+}
+
+#[test]
+fn the_library_tab_lists_the_indexed_files() {
+    let mut app = editor_on_the_test_project();
+    place_animated_model(&mut app);
+    settle_until(&mut app, "the library indexed the file", |app| {
+        library_has_the_animated_file(app)
+    });
+    open_library_tab(&mut app);
+    settle_until_listed(&mut app, "the file column listed the file");
+}
+
+#[test]
+fn the_library_tab_refills_after_the_layout_is_rebuilt() {
+    let mut app = editor_on_the_test_project();
+    place_animated_model(&mut app);
+    settle_until(&mut app, "the library indexed the file", |app| {
+        library_has_the_animated_file(app)
+    });
+    open_library_tab(&mut app);
+    settle_until_listed(&mut app, "the file column listed the file");
+
+    call(&mut app, "window.reset_layout", &[]);
+    open_library_tab(&mut app);
+    settle_until_listed(&mut app, "the file column listed the file again");
+}
