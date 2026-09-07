@@ -114,29 +114,40 @@ mod tests {
         (app, target, clip)
     }
 
-    fn events_after(app: &mut App, clip: Entity, now: f32) -> Vec<AnimationEvent> {
+    fn events_after(
+        app: &mut App,
+        cursor: &mut bevy::ecs::message::MessageCursor<AnimationEvent>,
+        clip: Entity,
+        now: f32,
+    ) -> Vec<AnimationEvent> {
         app.world_mut()
             .get_mut::<ClipPlayhead>(clip)
             .expect("the clip carries a playhead")
             .now = now;
         app.update();
-        app.world()
-            .resource::<Messages<AnimationEvent>>()
-            .iter_current_update_messages()
+        cursor
+            .read(app.world().resource::<Messages<AnimationEvent>>())
             .cloned()
             .collect()
+    }
+
+    fn cursor(app: &App) -> bevy::ecs::message::MessageCursor<AnimationEvent> {
+        app.world()
+            .resource::<Messages<AnimationEvent>>()
+            .get_cursor()
     }
 
     #[test]
     fn an_event_key_fires_once_when_playback_crosses_it() {
         let (mut app, target, clip) = world_with_an_event_at(0.5);
+        let mut seen = cursor(&app);
 
         assert!(
-            events_after(&mut app, clip, 0.4).is_empty(),
+            events_after(&mut app, &mut seen, clip, 0.4).is_empty(),
             "playback short of the key should say nothing"
         );
         assert_eq!(
-            events_after(&mut app, clip, 0.6),
+            events_after(&mut app, &mut seen, clip, 0.6),
             vec![AnimationEvent {
                 entity: target,
                 name: "step".to_string(),
@@ -144,7 +155,7 @@ mod tests {
             "the span that covers the key should send its name once"
         );
         assert!(
-            events_after(&mut app, clip, 0.7).is_empty(),
+            events_after(&mut app, &mut seen, clip, 0.7).is_empty(),
             "a key already passed must not send again"
         );
     }
@@ -152,9 +163,10 @@ mod tests {
     #[test]
     fn a_clip_that_wrapped_fires_the_keys_on_both_sides_of_the_wrap() {
         let (mut app, _, clip) = world_with_an_event_at(0.1);
-        events_after(&mut app, clip, 0.9);
+        let mut seen = cursor(&app);
+        events_after(&mut app, &mut seen, clip, 0.9);
 
-        let fired = events_after(&mut app, clip, 0.2);
+        let fired = events_after(&mut app, &mut seen, clip, 0.2);
 
         assert_eq!(
             fired.len(),
