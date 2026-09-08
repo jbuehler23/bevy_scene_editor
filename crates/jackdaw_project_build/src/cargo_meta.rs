@@ -327,6 +327,7 @@ fn first_error_line(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use path_slash::PathExt as _;
 
     fn meta(json: &str) -> CargoMeta {
         CargoMeta::parse(json).expect("metadata parses")
@@ -463,7 +464,7 @@ mod tests {
         let rebased: Vec<(String, String, &[&str], bool)> = packages
             .iter()
             .map(|(name, member, deps, has_lib)| {
-                let dir = root.join(member).display().to_string().replace('\\', "/");
+                let dir = root.join(member).to_slash_lossy().into_owned();
                 ((*name).to_string(), dir, *deps, *has_lib)
             })
             .collect();

@@ -70,7 +70,7 @@ fn prompts(app: &App) -> &[jackdaw::scenes::external_watch::ExternalSceneChange]
 }
 
 fn prompt_names(app: &App, file: &Path) -> bool {
-    let canonical = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let canonical = dunce::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
     prompts(app).iter().any(|change| change.path == canonical)
 }
 
@@ -285,14 +285,17 @@ fn a_refused_reload_keeps_the_open_scene_and_says_so() {
         "and the refused document spawns nothing: {names:?}",
     );
 
-    let canonical = std::fs::canonicalize(&scene).unwrap();
     let refused = app
         .world()
         .resource::<ExternalSceneChanges>()
         .refused
         .as_ref()
         .expect("a refused reload is reported, not swallowed");
-    assert_eq!(refused.path, canonical, "the report names the file");
+    assert_eq!(
+        refused.path,
+        dunce::canonicalize(&scene).unwrap_or_else(|_| scene.clone()),
+        "the report names the file"
+    );
     assert_eq!(
         refused.category,
         jackdaw::scene_io::RefusalCategory::Retired,
@@ -455,7 +458,7 @@ fn an_answer_for_an_evicted_prompt_does_not_touch_the_new_front() {
         .retain(|tab| {
             tab.path
                 .as_ref()
-                .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()) != front)
+                .map(|p| dunce::canonicalize(p).unwrap_or_else(|_| p.clone()) != front)
                 .unwrap_or(true)
         });
     app.update();

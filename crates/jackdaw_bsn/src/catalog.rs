@@ -413,6 +413,7 @@ mod tests {
     use bevy::asset::{Asset, AssetApp, AssetPlugin, Assets};
     use bevy::prelude::ReflectDefault;
     use bevy::reflect::Reflect;
+    use path_slash::PathExt as _;
 
     // A small asset with only scalar fields. Round-tripping this needs no
     // asset server, exercising the plain reflect path end to end.
@@ -757,19 +758,13 @@ mod tests {
         let base_path = server
             .get_path(loaded.base_color_texture.id())
             .expect("base texture path");
-        assert_eq!(
-            base_path.to_string().replace('\\', "/"),
-            "textures/base.png"
-        );
+        assert_eq!(base_path.path().to_slash_lossy(), "textures/base.png");
 
         let normal_handle = loaded.normal_map.expect("normal map should be Some");
         let normal_path = server
             .get_path(normal_handle.id())
             .expect("normal texture path");
-        assert_eq!(
-            normal_path.to_string().replace('\\', "/"),
-            "textures/normal.png"
-        );
+        assert_eq!(normal_path.path().to_slash_lossy(), "textures/normal.png");
     }
 
     // An asset whose `Option<Handle>` field defaults to `Some`, so a `None`

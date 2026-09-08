@@ -20,6 +20,7 @@ use jackdaw_feathers::text_edit::TextEditValue;
 use jackdaw_feathers::tooltip::Tooltip;
 use jackdaw_feathers::{file_browser, icons, icons::EditorFont, icons::IconFont, tokens};
 use jackdaw_widgets::file_browser::{FileBrowserItem, FileItemDoubleClicked};
+use path_slash::PathExt as _;
 use rfd::AsyncFileDialog;
 
 use crate::{
@@ -1132,7 +1133,7 @@ fn truncate_tile_name(name: &str, max_len: usize) -> String {
 }
 
 fn load_thumbnail(path: &Path, asset_server: &AssetServer) -> Option<Handle<Image>> {
-    let fs_path = path.to_string_lossy().replace('\\', "/");
+    let fs_path = path.to_slash_lossy();
     let asset_path = crate::entity_ops::to_asset_path(&fs_path);
     Some(asset_server.load(asset_path))
 }

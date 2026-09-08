@@ -26,6 +26,7 @@ use bevy::{
         graph::{AnimationGraph, AnimationGraphHandle, AnimationNodeIndex},
         transition::AnimationTransitions,
     },
+    asset::AssetPlugin,
     gltf::Gltf,
     mesh::skinning::SkinnedMesh,
     prelude::*,
@@ -33,8 +34,17 @@ use bevy::{
 use serde::{Deserialize, Serialize};
 
 pub mod events;
+pub mod graph;
 
 pub use events::{AnimationEvent, ClipEvent, ClipPlayhead, fire_clip_events};
+pub use graph::{
+    AnimationBlendPoint, AnimationClipRef, AnimationCondition, AnimationConditionOp,
+    AnimationGraphAsset, AnimationGraphBound, AnimationGraphDef, AnimationGraphLoadError,
+    AnimationGraphLoader, AnimationGraphPlayback, AnimationGraphRef, AnimationGraphSource,
+    AnimationGraphState, AnimationGraphTransition, AnimationMotion, AnimationParameterDef,
+    AnimationParameterKind, AnimationParams, AnimationTransitionDef, parse_animation_graph,
+    register_animation_graph_types,
+};
 
 /// The clips an entity can play and the states that choose between them.
 ///
@@ -145,25 +155,36 @@ pub struct AnimationSetBound {
 /// Sent when a non-looping state reaches the end of its clip.
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub struct AnimationStateFinished {
-    /// The entity carrying the [`AnimationSet`].
+    /// The entity carrying the [`AnimationSet`] or the [`AnimationGraphRef`].
     pub entity: Entity,
     /// The state that ran out.
     pub state: String,
 }
 
-/// The systems that bind animation sets and play the state they are asked for.
+/// The systems that bind animation sets and graphs and play the state they
+/// are asked for.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnimationSetSystems;
 
-/// Binds authored animation sets to their skeletons and plays their states.
+/// Binds authored animation sets and graphs to their skeletons and plays the
+/// state each asks for.
 ///
-/// Add it wherever scenes carrying an [`AnimationSet`] are spawned. Nothing
-/// here touches an entity without one.
+/// Add it wherever scenes carrying an [`AnimationSet`] or an
+/// [`AnimationGraphRef`] are spawned. Nothing here touches an entity carrying
+/// neither.
 pub struct AnimationRuntimePlugin;
 
 impl Plugin for AnimationRuntimePlugin {
     fn build(&self, app: &mut App) {
         register_animation_set_types(app);
+        graph::register_animation_graph_types(app);
+        // The graph asset and its loader need an asset server to register
+        // against; without one this stays the set half alone, which is what an
+        // app that only authors documents wants.
+        if app.is_plugin_added::<AssetPlugin>() {
+            app.init_asset::<AnimationGraphAsset>()
+                .init_asset_loader::<AnimationGraphLoader>();
+        }
         app.add_message::<AnimationStateFinished>()
             .add_message::<AnimationEvent>()
             .add_systems(Update, fire_clip_events)
@@ -181,6 +202,22 @@ impl Plugin for AnimationRuntimePlugin {
                         resource_exists::<AssetServer>
                             .and_then(resource_exists::<Assets<Gltf>>)
                             .and_then(resource_exists::<Assets<AnimationGraph>>),
+                    ),
+            )
+            .add_systems(
+                Update,
+                (
+                    graph::rebind_edited_graphs,
+                    graph::bind_animation_graphs,
+                    graph::advance_animation_graphs,
+                )
+                    .chain()
+                    .in_set(AnimationSetSystems)
+                    .run_if(
+                        resource_exists::<AssetServer>
+                            .and_then(resource_exists::<Assets<Gltf>>)
+                            .and_then(resource_exists::<Assets<AnimationGraph>>)
+                            .and_then(resource_exists::<Assets<AnimationGraphAsset>>),
                     ),
             );
     }
@@ -201,6 +238,10 @@ pub fn register_animation_set_types(app: &mut App) {
 /// Builds the player, the graph and the bone target ids of every set whose
 /// skeleton and source files have arrived.
 ///
+/// An entity naming a graph file is left to the graph evaluator: the two would
+/// otherwise each claim the same skeleton's player. A graph reference naming
+/// no file yet is not one.
+///
 /// Retried each frame rather than run on insertion, because a glTF scene
 /// spawns asynchronously and its skeleton can be several frames behind the
 /// component naming it.
@@ -213,6 +254,7 @@ fn bind_animation_sets(
         (
             Entity,
             &AnimationSet,
+            Option<&AnimationGraphRef>,
             Option<&AnimationSources>,
             Option<&AnimationState>,
         ),
@@ -221,7 +263,10 @@ fn bind_animation_sets(
     children: Query<&Children>,
     names: Query<&Name>,
 ) {
-    for (entity, set, sources, state) in &unbound {
+    for (entity, set, graph_ref, sources, state) in &unbound {
+        if graph_ref.is_some_and(|graph_ref| !graph_ref.path.is_empty()) {
+            continue;
+        }
         let Some(sources) = sources else {
             commands.entity(entity).insert(AnimationSources(
                 set.sources
@@ -573,7 +618,7 @@ fn tag_from(
 }
 
 /// Every descendant of `root` carrying `wanted` as its name, nearest first.
-fn descendants_named(
+pub(crate) fn descendants_named(
     root: Entity,
     wanted: &str,
     children: &Query<&Children>,

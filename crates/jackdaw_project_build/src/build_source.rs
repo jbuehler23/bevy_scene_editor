@@ -8,6 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use path_slash::PathExt as _;
+
 /// Where a build's jackdaw crates come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildSource {
@@ -63,7 +65,7 @@ impl BuildSource {
                 format!("git = \"{repository}\", rev = \"{rev}\"")
             }
             Self::Path(root) => {
-                format!("path = '{}'", crate_path(root, crate_name).display())
+                format!("path = '{}'", crate_path(root, crate_name).to_slash_lossy())
             }
         }
     }

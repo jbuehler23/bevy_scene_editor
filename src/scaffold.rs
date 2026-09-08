@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use bevy::app::AppExit;
 use include_dir::{Dir, include_dir};
 use jackdaw_env::rust_env_command;
+use path_slash::PathExt as _;
 use toml_edit::DocumentMut;
 
 /// The one Bevy minor this editor release supports.
@@ -893,7 +894,7 @@ pub fn scaffold_new_project(
 
     let mut written = 0usize;
     for file in files {
-        let rel = file.path().to_string_lossy().replace('\\', "/");
+        let rel = file.path().to_slash_lossy().into_owned();
         let (dest_rel, contents): (PathBuf, Vec<u8>) = match rel.strip_suffix(".template") {
             Some(stripped) => {
                 let text = std::str::from_utf8(file.contents()).map_err(|_| {
@@ -2145,8 +2146,8 @@ mod tests {
         let plan = plan_import_project(&root, None).unwrap();
         assert_eq!(plan.package_name, "game");
         assert_eq!(
-            plan.package_dir.canonicalize().unwrap(),
-            root.join("game").canonicalize().unwrap()
+            dunce::canonicalize(&plan.package_dir).unwrap(),
+            dunce::canonicalize(root.join("game")).unwrap()
         );
         // The settings file belongs to the folder the user opened, not
         // to the member; the member is recorded inside it instead.
