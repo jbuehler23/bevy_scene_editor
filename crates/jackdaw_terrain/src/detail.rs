@@ -205,9 +205,7 @@ pub fn place_detail(
             let cell_seed = mix64(
                 layer_seed ^ mix64(gx as i64 as u64) ^ mix64((gz as i64 as u64).rotate_left(32)),
             );
-            // Stochastic rounding: the fractional instance is spent by a draw
-            // against the cell's own hash.
-            let count = wanted.floor() as u32 + u32::from(unit(cell_seed) < wanted.fract());
+            let count = stochastic_round(wanted, cell_seed);
 
             for k in 0..count {
                 let h = mix64(cell_seed ^ mix64(u64::from(k).wrapping_add(0x9e37_79b9)));
@@ -286,6 +284,12 @@ fn smoothstep(t: f32) -> f32 {
 /// A `0..1` value as the byte the vertex buffer carries.
 fn to_byte(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// `wanted` as a whole count, its fraction spent as a draw against `seed` so
+/// that a field of cells averages out to `wanted`.
+fn stochastic_round(wanted: f32, seed: u64) -> u32 {
+    wanted.floor() as u32 + u32::from(unit(seed) < wanted.fract())
 }
 
 /// Top 24 bits of a hash as a `0..1` float.
@@ -446,13 +450,14 @@ mod tests {
     fn instances_in_one_patch_do_not_stand_level() {
         let heightmap = flat(16);
         let density = full(16);
+        let cells_within_one_variation_tile = 4;
         let placed = place(
             &density,
             &heightmap,
             &layer(40.0),
             0,
             IVec2::ZERO,
-            4,
+            cells_within_one_variation_tile,
             1.0,
             11,
         );
@@ -465,8 +470,6 @@ mod tests {
             let high = *bytes.iter().max().expect("instances were placed");
             high - low
         };
-        // Four cells fall inside one nine-metre variation tile, so the
-        // spread here is the instances' own.
         assert!(
             spread(&heights) > 20,
             "every instance stands the same height"
@@ -554,8 +557,8 @@ mod tests {
 
     #[test]
     fn tiles_are_listed_nearest_first_and_coarsen_with_distance() {
-        // The middle of tile (4, 4).
-        let tiles = detail_tiles_around(IVec2::new(72, 72), 64.0, 16);
+        let middle_of_tile_4_4 = IVec2::new(72, 72);
+        let tiles = detail_tiles_around(middle_of_tile_4_4, 64.0, 16);
         assert_eq!(tiles[0].0, IVec2::new(4, 4));
         assert_eq!(tiles[0].1, DetailLod::Near);
         assert_eq!(

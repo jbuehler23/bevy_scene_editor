@@ -220,10 +220,12 @@ pub fn apply_density_brush(
             let Some(before) = values.get(idx).copied() else {
                 continue;
             };
-            // A value past the ceiling, from a channel narrowed after it was
-            // painted, is pulled down to it.
-            let before = before.min(element.max_value());
-            let after = step_toward(before, target, (opacity * weight * dt).clamp(0.0, 1.0));
+            let before_within_ceiling = before.min(element.max_value());
+            let after = step_toward(
+                before_within_ceiling,
+                target,
+                (opacity * weight * dt).clamp(0.0, 1.0),
+            );
             if after != values[idx] {
                 values[idx] = after;
                 changed += 1;
@@ -504,15 +506,19 @@ mod tests {
         );
         let centre = values[20 * 40 + 20];
         assert!(centre > 0);
-        // The plateau reaches 6 cells out; the ring beyond it has fallen off.
-        for offset in 1..=5 {
+        let outermost_plateau_cell = 5;
+        for offset in 1..=outermost_plateau_cell {
             assert_eq!(
                 values[20 * 40 + 20 + offset],
                 centre,
                 "cell {offset} inside the plateau matches the centre"
             );
         }
-        assert!(values[20 * 40 + 20 + 9] < centre);
+        let beyond_the_plateau = outermost_plateau_cell + 4;
+        assert!(
+            values[20 * 40 + 20 + beyond_the_plateau] < centre,
+            "the ring beyond the plateau has not fallen off"
+        );
     }
 
     #[test]

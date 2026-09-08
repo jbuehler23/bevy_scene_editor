@@ -217,15 +217,14 @@ impl SetTerrainChannel {
         if let Some(mut dirty) = world.get_mut::<TerrainDirtyChunks>(self.entity) {
             dirty.rebuild_all = true;
         }
-        // The entry holds two whole-channel copies, so the mark is narrowed
-        // to the cells that differ.
-        if terrain.detail.iter().any(|layer| {
+        let channel_grows_detail = terrain.detail.iter().any(|layer| {
             terrain
                 .channels
                 .iter()
                 .position(|channel| channel.name == layer.density_channel)
                 == Some(self.channel)
-        }) {
+        });
+        if channel_grows_detail {
             let resolution = world
                 .resource::<TerrainDataStore>()
                 .grid_shape(&terrain)
@@ -863,8 +862,6 @@ pub fn terrain_paint(
             if super::stroke_should_end(&mouse) {
                 paint_state.active = false;
                 paint_state.detail_disc = None;
-                // The whole stroke once it is over, in case the renderer took
-                // a mark before those cells reached the projection.
                 if let Some(rect) = paint_state.stroke_detail_rect.take()
                     && let Some(mut detail_dirty) = detail_dirty
                 {
@@ -904,14 +901,12 @@ pub fn terrain_paint(
                         Some(grown) => grown.union(rect),
                         None => rect,
                     });
-                    // This frame's disc and the last one's, not the stroke so
-                    // far: the renderer retires every tile a mark covers.
-                    let mark = match paint_state.detail_disc.replace(rect) {
+                    let this_disc_and_the_last = match paint_state.detail_disc.replace(rect) {
                         Some(last) => last.union(rect),
                         None => rect,
                     };
                     if let Some(mut detail_dirty) = detail_dirty {
-                        detail_dirty.touch(mark);
+                        detail_dirty.touch(this_disc_and_the_last);
                     }
                 }
             }
@@ -928,6 +923,8 @@ const DETAIL_HARDNESS: f32 = 0.5;
 /// ring's half-intensity contour.
 const PAINT_THRESHOLD: f32 = 0.5;
 
+/// End a stroke that was abandoned, marking the ground it grew so that the
+/// detail standing on those cells is reseeded.
 fn cancel_terrain_paint(
     mut paint_state: ResMut<TerrainPaintState>,
     mut terrain_query: Query<(&jackdaw_scene_types::Terrain, &mut TerrainDirtyChunks)>,
@@ -940,8 +937,6 @@ fn cancel_terrain_paint(
     paint_state.active = false;
     paint_state.detail_disc = None;
 
-    // What an abandoned stroke grew stands until the ground under it is
-    // marked.
     if let Some(rect) = paint_state.stroke_detail_rect.take()
         && let Some(target) = paint_state.target
         && let Ok(mut dirty) = detail_dirty.get_mut(target)

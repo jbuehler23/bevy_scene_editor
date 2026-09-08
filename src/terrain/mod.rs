@@ -34,6 +34,8 @@ pub use palette::TerrainPalette;
 pub use regions::{RegionVisibility, TerrainRegionView};
 pub use store::TerrainDataStore;
 
+/// Terrain editing: sculpt, paint, scatter and detail, plus the projections
+/// the scatter and detail renderers rebuild from.
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
@@ -55,9 +57,6 @@ impl Plugin for TerrainPlugin {
                     detail::sync_terrain_detail,
                 )
                     .chain()
-                    // The projections this writes are what the renderers
-                    // rebuild from, so they are written before the rebuilds
-                    // read them rather than a frame behind them.
                     .before(jackdaw_terrain::render::ScatterSystems::Rebuild)
                     .before(jackdaw_terrain::render::DetailSystems::Rebuild)
                     .run_if(in_state(crate::AppState::Editor)),

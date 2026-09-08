@@ -43,6 +43,8 @@ use avian3d::prelude::{Collider, RigidBody};
 /// would upload as linear 0.214 and draw more than twice as dark.
 const UNTEXTURED: Color = Color::linear_rgb(0.5, 0.5, 0.5);
 
+/// Loads terrain sidecars and keeps ground surfaces in step with them, writing
+/// the scatter and detail projections before their renderers rebuild.
 pub(crate) fn plugin(app: &mut App) {
     app.add_plugins((TerrainRenderPlugin, ScatterRenderPlugin, DetailRenderPlugin))
         .add_systems(
@@ -56,8 +58,6 @@ pub(crate) fn plugin(app: &mut App) {
             )
                 .chain()
                 .after(crate::spawn_loaded_scenes)
-                // The scatter and detail a sidecar carries are written here and
-                // drawn by the rebuilds, so they land before the rebuilds read them.
                 .before(ScatterSystems::Rebuild)
                 .before(DetailSystems::Rebuild),
         );

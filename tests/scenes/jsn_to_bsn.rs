@@ -396,9 +396,6 @@ fn inline_material_reference_and_terrain_survive_conversion() {
             channels: Vec::new(),
             data_path: String::new(),
             heights: vec![0.0, 0.5, 1.0, 0.0, 0.25, 0.75, 0.1, 0.2, 0.3],
-            // A scene this old predates quantization, the navmesh agent and
-            // detail layers. Spelled out rather than `..default()` to enumerate
-            // what it holds.
             quantization: Default::default(),
             navmesh: Default::default(),
             detail: Vec::new(),

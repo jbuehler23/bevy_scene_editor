@@ -305,17 +305,20 @@ fn an_index_addresses_a_layer_before_a_name_that_reads_as_one() {
     assert_eq!(terrain.detail[1].name, "0");
     assert_eq!(terrain.detail[1].density_channel, "0");
 
-    // Both layers exist, so "1" reads as an index and reaches the second.
     assert_eq!(stamp(&mut app, Some("1"), false), OperatorResult::Finished);
     let (_, terrain) = the_terrain(&mut app);
-    assert!(density_at(&app, &terrain, "0", AIMED, AIMED) > 0);
+    assert!(
+        density_at(&app, &terrain, "0", AIMED, AIMED) > 0,
+        "layer=1 reached the second layer"
+    );
     assert_eq!(density_at(&app, &terrain, "grass", AIMED, AIMED), 0);
 
-    // And "0" reads as an index too, so it reaches the first rather than the
-    // layer that carries that name.
     assert_eq!(stamp(&mut app, Some("0"), false), OperatorResult::Finished);
     let (_, terrain) = the_terrain(&mut app);
-    assert!(density_at(&app, &terrain, "grass", AIMED, AIMED) > 0);
+    assert!(
+        density_at(&app, &terrain, "grass", AIMED, AIMED) > 0,
+        "layer=0 reached the first layer, not the layer named 0"
+    );
 }
 
 #[test]
@@ -592,8 +595,6 @@ fn setting_a_field_changes_the_layer_and_an_unknown_field_is_refused() {
 #[test]
 fn the_mesh_field_takes_the_card_or_a_model_and_refuses_a_missing_file() {
     let mut app = layered_app();
-    // The editor resolves an assets-relative path under the running project,
-    // which for a test is the repository's own assets directory.
     let model = "models/dungeon.glb";
     assert!(
         std::path::Path::new("assets").join(model).is_file(),

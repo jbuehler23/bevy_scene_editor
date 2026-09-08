@@ -10,7 +10,7 @@ use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::SystemParamItem;
 use bevy::ecs::system::lifetimeless::{Read, SRes};
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
-use bevy::math::Affine3A;
+use bevy::math::{Affine3A, Mat3A};
 use bevy::mesh::{
     Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexBufferLayout,
 };
@@ -197,10 +197,10 @@ pub struct DetailDirty {
 }
 
 impl DetailDirty {
-    /// Mark the ground a rect covers stale.
+    /// Mark the ground a rect covers stale. An uncaught mark widens to cover
+    /// both rather than being replaced.
     pub fn touch(&mut self, rect: GridRect) {
         self.rect = Some(match self.rect {
-            // Marks accumulate: an uncaught mark is widened, never replaced.
             Some(held) => union(held, rect),
             None => rect,
         });
@@ -438,20 +438,17 @@ pub fn card_mesh(segments: u32) -> Mesh {
         ]);
     }
 
-    // Left readable on the main world: a card is a handful of vertices, and a
-    // mesh extracted away panics anything that reads its attributes.
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_attribute(ATTRIBUTE_HEIGHT_FRACTION, fractions)
-    .with_inserted_indices(Indices::U32(indices))
+    let readable_on_the_main_world = RenderAssetUsages::default();
+    Mesh::new(PrimitiveTopology::TriangleList, readable_on_the_main_world)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_attribute(ATTRIBUTE_HEIGHT_FRACTION, fractions)
+        .with_inserted_indices(Indices::U32(indices))
 }
 
 /// A tileable value-noise texture for the shader to read the wind from.
+/// Sampled at world coordinates over a tile size, so the sampler repeats.
 pub fn wind_noise_image() -> Image {
     let side = WIND_TEXTURE_SIZE;
     let scale = WIND_LATTICE / side as f32;
@@ -474,7 +471,6 @@ pub fn wind_noise_image() -> Image {
         TextureFormat::R8Unorm,
         RenderAssetUsages::RENDER_WORLD,
     );
-    // Sampled at world coordinates over a tile size, so the sampler repeats.
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,
@@ -628,6 +624,12 @@ fn build_detail_meshes(
     }
 }
 
+/// The matrix that carries a normal through `affine`: the inverse transpose,
+/// so that a non-uniform scale tilts the normal the way the surface turns.
+fn normal_matrix_of(affine: Affine3A) -> Mat3A {
+    affine.matrix3.inverse().transpose()
+}
+
 /// Every primitive of a flattened glTF as one mesh, with the base colour
 /// texture the first textured primitive carries. `None` while any is loading.
 fn merge_primitives(
@@ -660,8 +662,7 @@ fn merge_primitives(
             continue;
         };
         let affine = primitive.local.compute_affine();
-        // A normal survives a non-uniform scale through the inverse transpose.
-        let normal_matrix = affine.matrix3.inverse().transpose();
+        let normal_matrix = normal_matrix_of(affine);
         let base = positions.len() as u32;
 
         let source_normals = mesh
@@ -793,8 +794,6 @@ fn rebuild_detail_tiles(
     )>,
     tiles: Query<(Entity, &DetailTile)>,
 ) {
-    // A tile is a root entity, not a child of its terrain, so it is retired
-    // here rather than with the terrain.
     for (tile_entity, tile) in &tiles {
         let layers = terrains
             .get(tile.terrain)
@@ -832,8 +831,6 @@ fn rebuild_detail_tiles(
                 if tile.terrain != entity || tile.layer != index {
                     continue;
                 }
-                // Asked with the level the tile already carries, which applies
-                // the hysteresis.
                 let level = detail_lod_at(
                     tile_centre_distance(viewer_cell, tile.tile, DETAIL_TILE_CELLS),
                     cull_cells,
@@ -856,20 +853,15 @@ fn rebuild_detail_tiles(
                 if standing.contains(&coord) {
                     continue;
                 }
-                // A layer whose asset is still loading draws nothing.
                 let Some(mesh) = layer_mesh(&assets, &built, &entry.layer, lod) else {
                     break;
                 };
                 spent += 1;
                 let instances = seed_tile(source, &settings, index, coord, lod, world_from_local);
-                // Bare ground is still a tile; extraction drops one with no
-                // instances.
                 let bounds = match instances.is_empty() {
                     true => footprint(source, coord, world_from_local),
                     false => tile_bounds(&instances, &entry.layer),
                 };
-                // Tagged out of the navmesh here: a tile carries a mesh, and
-                // the bake reads whatever mesh a scene entity carries.
                 commands.spawn((
                     DetailTile {
                         terrain: entity,
@@ -1081,8 +1073,8 @@ impl SpecializedMeshPipeline for DetailPipeline {
             fragment.shader = self.shader.clone();
         }
         descriptor.layout.push(self.layout.clone());
-        // A card is a sheet with no inside, so both of its faces draw.
-        descriptor.primitive.cull_mode = None;
+        let draw_both_faces_of_a_sheet = None;
+        descriptor.primitive.cull_mode = draw_both_faces_of_a_sheet;
         Ok(descriptor)
     }
 }
@@ -1113,7 +1105,8 @@ fn prepare_detail_buffers(
     }
 }
 
-/// Build one bind group per layer of every terrain drawing detail.
+/// Build one bind group per layer of every terrain drawing detail. A look
+/// whose textures have not reached the GPU is left out.
 fn prepare_detail_bind_groups(
     mut groups: ResMut<DetailBindGroups>,
     pipeline: Res<DetailPipeline>,
@@ -1127,7 +1120,6 @@ fn prepare_detail_bind_groups(
     groups.0.clear();
     let mut param = (images, fallback, buffers);
     for (key, bindings) in &looks.0 {
-        // A look whose textures have not reached the GPU is left out.
         if let Ok(prepared) = bindings.as_bind_group(
             &pipeline.layout,
             &render_device,
@@ -1160,7 +1152,7 @@ fn queue_detail_tiles(
     tiles: Query<(Entity, &MainEntity), With<DetailTile>>,
 ) {
     let draw_function = draw_functions.read().id::<DrawDetail>();
-    // A view that has gone takes its phase with it.
+    let draws_its_own_instances = BinnedRenderPhaseType::NonMesh;
     let live: HashSet<_> = views.iter().map(|view| view.retained_view_entity).collect();
     queued.0.retain(|view, _| live.contains(view));
 
@@ -1172,8 +1164,6 @@ fn queue_detail_tiles(
             continue;
         };
 
-        // The bin keeps what it is given; anything no longer a tile is
-        // removed below.
         let held = queued.0.entry(view.retained_view_entity).or_default();
         let mut present = HashSet::new();
 
@@ -1211,9 +1201,7 @@ fn queue_detail_tiles(
                 },
                 (entity, *main_entity),
                 instance.current_uniform_index,
-                // The draw does its own instancing and ignores the batch range,
-                // so it never joins a batch or an indirect draw.
-                BinnedRenderPhaseType::NonMesh,
+                draws_its_own_instances,
             );
         }
 
@@ -1482,10 +1470,10 @@ mod tests {
     fn two_layers_seed_their_own_tiles_from_their_own_channels() {
         let mut app = detail_app();
         let mut data = document(64, &["grass", "flowers"]);
-        // The second channel covers a corner of the ground rather than all of it.
+        let painted_corner = 32;
         for z in 0..64 {
             for x in 0..64 {
-                if x >= 32 || z >= 32 {
+                if x >= painted_corner || z >= painted_corner {
                     data.regions.set_channel(1, x, z, 0);
                 }
             }
@@ -1615,9 +1603,11 @@ mod tests {
         else {
             panic!("the merge carries a height fraction per vertex");
         };
-        // The parts stack two units tall, so the lower part's tip is halfway up.
         assert_eq!(fractions[0], 0.0);
-        assert_eq!(fractions[2], 0.5);
+        assert_eq!(
+            fractions[2], 0.5,
+            "the lower of two stacked units reaches halfway up"
+        );
         assert_eq!(fractions[5], 1.0);
     }
 
@@ -1694,13 +1684,11 @@ mod tests {
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![diagonal; 3])
         .with_inserted_indices(Indices::U32(vec![0, 1, 2]));
-        // Stretched fourfold up: the surface flattens, so its normal turns
-        // toward straight up under the matrix and away from it under the
-        // inverse transpose.
+        let stretched_fourfold_up = Transform::from_scale(Vec3::new(1.0, 4.0, 1.0));
         let primitives = vec![ScatterPrimitive {
             mesh: meshes.add(leaning),
             material: Handle::default(),
-            local: Transform::from_scale(Vec3::new(1.0, 4.0, 1.0)),
+            local: stretched_fourfold_up,
         }];
 
         let (merged, _) = merge_primitives("models/leaning.gltf", &primitives, &meshes, &materials)
@@ -2118,8 +2106,6 @@ mod tests {
             "no slot is reused"
         );
 
-        // The mesh takes the first four slots, one per attribute the card and
-        // every merged asset carry.
         let card = card_mesh(NEAR_SEGMENTS);
         for attribute in [
             Mesh::ATTRIBUTE_POSITION.id,
@@ -2129,7 +2115,11 @@ mod tests {
         ] {
             assert!(card.attribute(attribute).is_some());
         }
-        assert_eq!(card.attributes().count(), 4);
+        assert_eq!(
+            card.attributes().count(),
+            4,
+            "the card and every merged asset carry one attribute per mesh slot"
+        );
         for location in &locations {
             assert!(*location >= 4, "slot {location} is already the mesh's");
         }

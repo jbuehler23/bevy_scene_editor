@@ -126,8 +126,6 @@ impl SetTerrainHeights {
         if let Some(mut dirty) = world.get_mut::<TerrainDirtyChunks>(self.entity) {
             dirty.rebuild_all = true;
         }
-        // Detail stands on the heights, so the cells this put back are owed a
-        // reseed.
         let rect = match &self.patch {
             HeightPatch::Whole { .. } => {
                 let resolution = world
@@ -345,8 +343,6 @@ pub fn terrain_sculpt(
                 Some(grown) => grown.union(rect),
                 None => rect,
             });
-            // Moving ground moves the detail on it, so the cells this frame
-            // wrote are owed a reseed.
             if let Some(detail_dirty) = detail_dirty.as_mut() {
                 detail_dirty.touch(rect);
             }

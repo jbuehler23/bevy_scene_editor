@@ -60,18 +60,16 @@ pub fn sync_terrain_detail(
             Some(held) => reseeds_field(held.source(), projected.source()),
             None => true,
         };
-        // An edit that moved neither the store nor a layer rewrites nothing.
         let layers_changed =
             held.is_none_or(|held| looks_of(held.source()) != looks_of(projected.source()));
         if !store_changed && !layers_changed && !reseeds {
             continue;
         }
-        // Merged rather than replaced: an uncaught mark is still owed a reseed.
-        let mut mark = marked.copied().unwrap_or_default();
+        let mut merged_mark = marked.copied().unwrap_or_default();
         if reseeds {
-            mark.touch(GridRect::whole(projected.source().grid.resolution));
+            merged_mark.touch(GridRect::whole(projected.source().grid.resolution));
         }
-        commands.entity(entity).insert((projected, mark));
+        commands.entity(entity).insert((projected, merged_mark));
     }
 }
 
@@ -130,10 +128,10 @@ mod tests {
             ..RegionTerrainData::default()
         };
         data.regions.set_channel_count(1);
-        // A height of zero writes no cell, so the ground is painted instead.
+        let density_everywhere = 128;
         for z in 0..8 {
             for x in 0..8 {
-                data.regions.set_channel(0, x, z, 128);
+                data.regions.set_channel(0, x, z, density_everywhere);
             }
         }
         data
@@ -324,9 +322,10 @@ mod tests {
         let after = TerrainDetailSource::from_document(&data, &trimmed)
             .expect("the terrain carries layers");
 
-        // A tile names the layer it grew from by index, so the layers past the
-        // gap draw the wrong instances until the field is seeded again.
-        assert!(reseeds_field(before.source(), after.source()));
+        assert!(
+            reseeds_field(before.source(), after.source()),
+            "the layers after the gap kept their old indices"
+        );
     }
 
     #[test]

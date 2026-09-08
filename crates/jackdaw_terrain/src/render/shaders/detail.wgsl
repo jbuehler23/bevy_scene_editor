@@ -1,5 +1,4 @@
-// One detail instance per draw instance. Vertex buffer 0 is the layer's mesh,
-// buffer 1 one `DetailInstance` per instance, already in world space.
+// Instanced ground detail with wind, bend and pressers.
 
 #import bevy_pbr::{
     forward_io::FragmentOutput,
@@ -21,10 +20,10 @@ const ALPHA_CUTOFF: f32 = 0.5;
 const TAU: f32 = 6.2831855;
 
 struct DetailUniform {
-    // Linear colour at the foot and at the top of an instance. `w` is unused.
+    /// Linear colour at the foot and at the top of an instance. `w` is unused.
     color_base: vec4<f32>,
     color_tip: vec4<f32>,
-    // Direction the wind pattern travels across the terrain, on XZ.
+    /// Direction the wind pattern travels across the terrain, on XZ.
     wind_direction: vec2<f32>,
     wind_speed: f32,
     wind_strength: f32,
@@ -32,15 +31,16 @@ struct DetailUniform {
     wind_tile_size: f32,
     bend: f32,
     push_strength: f32,
-    // Shortest and tallest an instance stands, in world units.
+    /// Shortest and tallest an instance stands, in world units.
     height_range: vec2<f32>,
-    // Narrowest and widest it is drawn, over its mesh's own width.
+    /// Narrowest and widest it is drawn, over its mesh's own width.
     width_range: vec2<f32>,
     cull_distance: f32,
     presser_count: u32,
-    // Whether the mesh is the built-in card, whose taper is carved below.
+    /// Whether the mesh is the built-in card, a straight strip whose taper the
+    /// fragment stage carves. An asset mesh is cut out by its texture instead.
     is_card: u32,
-    // `xyz` is a presser's world position, `w` how far it flattens detail.
+    /// `xyz` is a presser's world position, `w` how far it flattens detail.
     pressers: array<vec4<f32>, 16>,
 }
 
@@ -50,13 +50,17 @@ struct DetailUniform {
 @group(3) @binding(3) var color_texture: texture_2d<f32>;
 @group(3) @binding(4) var color_sampler: sampler;
 
+/// Vertex buffer 0 is the layer's mesh, buffer 1 one `DetailInstance` per draw
+/// instance, already in world space.
 struct Vertex {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    /// 0 at the foot of the mesh and 1 at its top.
     @location(3) height_fraction: f32,
     @location(4) instance_position: vec3<f32>,
     @location(5) instance_packed: u32,
+    /// The xz of the ground normal the placement recorded; zero stands up.
     @location(6) instance_tilt: vec2<f32>,
 }
 
@@ -105,13 +109,9 @@ fn vertex(in: Vertex) -> DetailOutput {
     );
     let variation = vec4<f32>(packed) / 255.0;
 
-    // Up the mesh, 0 at the foot and 1 at the top; every lean below is
-    // weighted by it.
-    let t = in.height_fraction;
+    let up_the_mesh = in.height_fraction;
     let base = in.instance_position;
 
-    // Instances shrink into the ground over the last FADE_BAND of the cull
-    // distance.
     let to_viewer = distance(view.world_position, base);
     let fade_start = detail.cull_distance * (1.0 - FADE_BAND);
     let fade = 1.0 - smoothstep(fade_start, detail.cull_distance, to_viewer);
@@ -120,27 +120,25 @@ fn vertex(in: Vertex) -> DetailOutput {
     let width = mix(detail.width_range.x, detail.width_range.y, variation.y);
     let yaw = variation.z * TAU;
 
-    // Squared, so the bend gathers toward the top.
+    let bend_gathered_toward_the_top = up_the_mesh * up_the_mesh * detail.bend;
     let local = vec3<f32>(
         in.position.x * width,
-        t * height,
-        in.position.z * width + t * t * detail.bend,
+        up_the_mesh * height,
+        in.position.z * width + bend_gathered_toward_the_top,
     );
-    let normal = normalize(mix(in.normal, vec3<f32>(0.0, 1.0, 0.0), t));
+    let normal = normalize(mix(in.normal, vec3<f32>(0.0, 1.0, 0.0), up_the_mesh));
 
-    // The instance stands along the ground normal the placement recorded, or
-    // straight up where it recorded none.
     let tilt = in.instance_tilt;
-    let up = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
-    var offset = tilt_toward(rotate_y(local, yaw), up);
-    let world_normal = tilt_toward(rotate_y(normal, yaw), up);
+    let ground_normal = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
+    var offset = tilt_toward(rotate_y(local, yaw), ground_normal);
+    let world_normal = tilt_toward(rotate_y(normal, yaw), ground_normal);
 
     let wind = wind_at(base.xz);
     let along = normalize(detail.wind_direction + vec2<f32>(1e-6, 0.0));
     offset += vec3<f32>(
-        along.x * wind * detail.wind_strength * t,
-        abs(wind) * detail.wind_vertical_strength * t,
-        along.y * wind * detail.wind_strength * t,
+        along.x * wind * detail.wind_strength * up_the_mesh,
+        abs(wind) * detail.wind_vertical_strength * up_the_mesh,
+        along.y * wind * detail.wind_strength * up_the_mesh,
     );
 
     for (var i = 0u; i < min(detail.presser_count, MAX_PRESSERS); i += 1u) {
@@ -151,29 +149,28 @@ fn vertex(in: Vertex) -> DetailOutput {
         let strength = 1.0 - smoothstep(0.0, reach, length(flat_away));
         if strength > 0.0 {
             let direction = normalize(vec3<f32>(flat_away.x, 0.0, flat_away.y) + vec3<f32>(1e-6, 0.0, 0.0));
-            offset += direction * strength * detail.push_strength * t;
-            // Pressed down as well as aside.
-            offset.y -= strength * detail.push_strength * t * 0.5;
+            let pushed = strength * detail.push_strength * up_the_mesh;
+            offset += direction * pushed;
+            let pressed_down = pushed * 0.5;
+            offset.y -= pressed_down;
         }
     }
 
     let world = base + offset;
     let tint = mix(DIMMEST, 1.0, variation.w);
-    let shade = mix(AMBIENT_FLOOR, 1.0, t);
+    let shade = mix(AMBIENT_FLOOR, 1.0, up_the_mesh);
 
     var out: DetailOutput;
     out.world_position = vec4<f32>(world, 1.0);
     out.position = view.clip_from_world * out.world_position;
     out.world_normal = normalize(world_normal);
     out.uv = in.uv;
-    out.color = mix(detail.color_base.rgb, detail.color_tip.rgb, t) * tint * shade;
+    out.color = mix(detail.color_base.rgb, detail.color_tip.rgb, up_the_mesh) * tint * shade;
     return out;
 }
 
 @fragment
 fn fragment(in: DetailOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    // The card is a straight strip; the taper is carved here. An asset mesh
-    // brings its own silhouette and is cut out by its texture instead.
     if detail.is_card != 0u {
         let half_span = 1.0 - in.uv.y * in.uv.y;
         if abs(in.uv.x - 0.5) * 2.0 > half_span {
@@ -185,8 +182,8 @@ fn fragment(in: DetailOutput, @builtin(front_facing) is_front: bool) -> Fragment
         discard;
     }
 
-    // Both faces are lit as front-facing; a card is a sheet with no inside.
-    let n = normalize(pbr_functions::prepare_world_normal(in.world_normal, true, is_front));
+    let double_sided = true;
+    let n = normalize(pbr_functions::prepare_world_normal(in.world_normal, double_sided, is_front));
 
     var pbr_input = pbr_types::pbr_input_new();
     pbr_input.flags = mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;

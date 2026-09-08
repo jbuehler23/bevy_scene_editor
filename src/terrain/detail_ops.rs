@@ -39,8 +39,17 @@ fn detail_terrain(world: &mut World, params: &OperatorParameters, id: &str) -> O
     entity
 }
 
+/// The layer some text addresses, an index before a name, so that an index
+/// still wins over a layer whose name is a number.
+fn layer_by_index_or_name(layers: &[DetailLayer], addressed: &str) -> Option<usize> {
+    match addressed.parse::<usize>() {
+        Ok(index) if index < layers.len() => Some(index),
+        _ => layers.iter().position(|layer| layer.name == addressed),
+    }
+}
+
 /// The layer a `layer=` parameter addresses: an index, a name, or the selected
-/// layer when it is left out.
+/// layer when it is left out. A selection past the end falls back to the last.
 fn resolve_layer(
     world: &mut World,
     entity: Entity,
@@ -53,17 +62,9 @@ fn resolve_layer(
         .map(str::to_string)
         .or_else(|| params.as_int("layer").map(|index| index.to_string()));
     let index = match addressed {
-        // An index wins over a layer whose name is a number.
-        Some(addressed) => match addressed.trim().parse::<usize>() {
-            Ok(index) if index < layers.len() => Some(index),
-            _ => layers
-                .iter()
-                .position(|layer| layer.name == addressed.trim()),
-        },
+        Some(addressed) => layer_by_index_or_name(&layers, addressed.trim()),
         None => {
             let selected = world.resource::<TerrainPaintState>().detail_layer;
-            // A selection left past the end, by an undo or a removal, falls
-            // back to the last layer rather than addressing nothing.
             (!layers.is_empty()).then(|| selected.min(layers.len() - 1))
         }
     };
@@ -181,6 +182,15 @@ fn unique_layer_name(wanted: &str, layers: &[DetailLayer]) -> String {
         .expect("the candidate space is unbounded")
 }
 
+/// Where the selection lands once the layer at `removed` is gone: it follows
+/// the layer it was on, and onto the last layer when that was the removed one.
+fn selection_after_removing(selected: usize, removed: usize, layers_left: usize) -> usize {
+    match selected {
+        selected if selected > removed => selected - 1,
+        selected => selected.min(layers_left.saturating_sub(1)),
+    }
+}
+
 /// Remove one detail layer, leaving the channel it grew from painted.
 #[operator(
     id = "terrain.detail.remove",
@@ -213,7 +223,7 @@ pub(crate) fn terrain_detail_remove(
     };
     let mut after = before.clone();
     after.remove(index);
-    let left = after.len();
+    let layers_left = after.len();
 
     world.resource_scope(|world, mut history: Mut<CommandHistory>| {
         history.execute(
@@ -226,13 +236,7 @@ pub(crate) fn terrain_detail_remove(
         );
     });
     let mut paint = world.resource_mut::<TerrainPaintState>();
-    // The selection follows the layer it was on: one earlier when that layer
-    // stood after the removed one, and onto the last layer when it was the
-    // removed one itself.
-    paint.detail_layer = match paint.detail_layer {
-        selected if selected > index => selected - 1,
-        selected => selected.min(left.saturating_sub(1)),
-    };
+    paint.detail_layer = selection_after_removing(paint.detail_layer, index, layers_left);
     OperatorResult::Finished
 }
 
@@ -497,7 +501,7 @@ pub(crate) fn terrain_detail_stamp(
         };
         let before = data.channel_values(channel);
         let mut values = before.clone();
-        // dt = 1.0, so `opacity` reads as an amount rather than a rate.
+        let one_whole_application = 1.0;
         let changed = jackdaw_terrain::apply_density_brush(
             &mut values,
             placement.resolution,
@@ -507,7 +511,7 @@ pub(crate) fn terrain_detail_stamp(
             hardness,
             falloff,
             opacity,
-            1.0,
+            one_whole_application,
             erase,
         );
         if changed == 0 {
@@ -620,13 +624,12 @@ fn write_field(layer: &mut DetailLayer, field: &str, value: &str) -> bool {
             _ => return false,
         },
         "height" | "width" => match numbers::<2>(value) {
-            // Stored low end first, so a range typed backwards is still a range.
             Some([a, b]) if a >= 0.0 && b >= 0.0 => {
-                let range = [a.min(b), a.max(b)];
+                let low_end_first = [a.min(b), a.max(b)];
                 if field == "height" {
-                    layer.height = range;
+                    layer.height = low_end_first;
                 } else {
-                    layer.width = range;
+                    layer.width = low_end_first;
                 }
             }
             _ => return false,
@@ -681,13 +684,11 @@ impl SetTerrainDetail {
         let Some(mut terrain) = world.get_mut::<Terrain>(self.entity) else {
             return;
         };
-        let left = detail.len();
+        let layers_left = detail.len();
         terrain.detail = detail;
         let terrain = terrain.clone();
-        // A shorter list would otherwise leave the brush and the panel
-        // pointing past the end.
         let mut paint = world.resource_mut::<TerrainPaintState>();
-        paint.detail_layer = paint.detail_layer.min(left.saturating_sub(1));
+        paint.detail_layer = paint.detail_layer.min(layers_left.saturating_sub(1));
         crate::commands::sync_component_to_ast(
             world,
             self.entity,
@@ -730,11 +731,11 @@ impl EditorCommand for AddTerrainChannel {
         {
             return;
         }
+        let continuous_coverage = Vec::new();
         terrain.channels.push(TerrainChannel {
             name: self.name.clone(),
             element: TerrainChannelElement::U8,
-            // No palette: coverage is a continuous fraction of the ceiling.
-            palette: Vec::new(),
+            palette: continuous_coverage,
         });
         super::channel_ops::commit_channels(world, self.entity);
     }
