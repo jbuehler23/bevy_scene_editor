@@ -14,6 +14,7 @@ use jackdaw_feathers::{
     text_edit::{self, TextEditProps, TextEditValue},
     tokens,
 };
+use path_slash::PathExt as _;
 use rfd::AsyncFileDialog;
 
 use crate::brush::LastUsedMaterial;
@@ -235,7 +236,7 @@ fn collect_texture_paths(dir: &Path, paths: &mut Vec<String>) {
                 continue;
             }
 
-            paths.push(path.to_string_lossy().replace('\\', "/"));
+            paths.push(path.to_slash_lossy().into_owned());
         }
     }
 }
@@ -752,7 +753,7 @@ fn poll_texture_slot_pick(world: &mut World) {
         return;
     };
     let path = file_handle.path().to_path_buf();
-    let fs_path = path.to_string_lossy().replace('\\', "/");
+    let fs_path = path.to_slash_lossy();
     let asset_path = crate::entity_ops::to_asset_path(&fs_path);
     let asset_server = world.resource::<AssetServer>().clone();
     let image_handle = if slot.is_srgb() {

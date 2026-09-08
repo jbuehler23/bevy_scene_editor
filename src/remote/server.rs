@@ -24,6 +24,7 @@ use jackdaw_env::editor_endpoint::{
     EditorEndpoint, current_process_name, remove_endpoint, write_endpoint,
 };
 use jackdaw_scene_types::PropertyValue;
+use path_slash::PathExt as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -1100,7 +1101,7 @@ fn collect_assets(root: &Path, dir: &Path, pattern: &str, depth: usize, found: &
         let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
-        let relative = relative.to_string_lossy().to_string();
+        let relative = relative.to_slash_lossy().into_owned();
         if matches_pattern(&relative, pattern) {
             found.push(relative);
         }

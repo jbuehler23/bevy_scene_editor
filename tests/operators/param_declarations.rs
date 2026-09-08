@@ -153,6 +153,8 @@ fn operators() -> Vec<(String, PathBuf, BTreeSet<String>, BTreeSet<String>)> {
         let Ok(src) = std::fs::read_to_string(&path) else {
             continue;
         };
+        // For Windows CRLF weirdness
+        let src = src.replace("\r\n", "\n");
         for (at, _) in src.match_indices("#[operator(") {
             let open = at + "#[operator".len();
             let Some(end) = group_end(&src, open) else {

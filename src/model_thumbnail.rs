@@ -40,6 +40,7 @@ use bevy::{
     world_serialization::{WorldAsset, WorldAssetRoot},
 };
 use jackdaw_feathers::tokens;
+use path_slash::PathExt as _;
 
 /// Render layer the thumbnail stage owns exclusively. Layer 0 is the world,
 /// layer 1 is the material preview, and per-viewport grids start at layer 3
@@ -73,7 +74,7 @@ const JOB_TIMEOUT_FRAMES: u32 = 600;
 /// read-back is queued. `Screenshot` swaps the target's output attachment
 /// and captures the *next* render into it, so there has to be at least one
 /// more render after the model is in place.
-const SETTLE_FRAMES: u32 = 2;
+const SETTLE_FRAMES: u32 = 8;
 
 /// How far outside the browser's scroll viewport a tile still counts as
 /// visible, in pixels. Roughly two extra rows above and below, so a slow
@@ -789,7 +790,7 @@ fn decode_thumbnail(bytes: &[u8]) -> Option<Image> {
 
 /// Map an absolute file path to the asset path the `AssetServer` wants.
 fn to_asset_path(path: &Path) -> String {
-    crate::entity_ops::to_asset_path(&path.to_string_lossy().replace('\\', "/"))
+    crate::entity_ops::to_asset_path(&path.to_slash_lossy())
 }
 
 /// Put every entity in the spawned glTF hierarchy on the thumbnail layer.

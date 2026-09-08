@@ -4872,6 +4872,7 @@ dependencies = [
  "libc",
  "libloading",
  "notify",
+ "path-slash",
  "pathdiff",
  "prettyplease",
  "proc-macro2",
@@ -4988,6 +4989,7 @@ dependencies = [
  "lalrpop-util",
  "log",
  "nom 8.0.0",
+ "path-slash",
  "pathdiff",
  "smol_str",
  "thiserror 2.0.20",
@@ -5127,7 +5129,7 @@ dependencies = [
  "jackdaw_bsn",
  "jackdaw_geometry",
  "jackdaw_scene_types",
- "rand 0.9.5",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -5264,6 +5266,7 @@ version = "0.19.0"
 dependencies = [
  "bevy",
  "jackdaw_bsn",
+ "path-slash",
  "pathdiff",
 ]
 
@@ -5274,6 +5277,7 @@ dependencies = [
  "jackdaw_env",
  "jackdaw_schema",
  "libc",
+ "path-slash",
  "serde",
  "serde_json",
  "syn 2.0.119",
@@ -5332,7 +5336,8 @@ dependencies = [
  "dunce",
  "glam 0.32.1",
  "jackdaw_geometry",
- "rand 0.9.5",
+ "path-slash",
+ "rand 0.10.2",
  "serde",
  "serde_json",
 ]
@@ -5381,7 +5386,8 @@ dependencies = [
  "bevy",
  "bevy_math",
  "noise",
- "rand 0.9.5",
+ "path-slash",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -7513,6 +7519,12 @@ name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
+name = "path-slash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
 
 [[package]]
 name = "pathdiff"

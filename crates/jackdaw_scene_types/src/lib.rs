@@ -14,7 +14,7 @@
 //! pub struct PlayerSpawn;
 //! ```
 //!
-//! `jackdaw_runtime` and `jackdaw` re-export both newtypes
+//! `jackdaw_runtime` and `jackdaw` re-export these newtypes
 //! through their preludes.
 
 pub mod asset_path;
@@ -237,6 +237,17 @@ impl From<&'static str> for EditorDescription {
 impl From<String> for EditorDescription {
     fn from(value: String) -> Self {
         EditorDescription(Cow::Owned(value))
+    }
+}
+
+/// Viewport preview for a marker component. Attach via
+/// `#[reflect(@EditorPreview::gltf("models/rifle.glb"))]`.
+#[derive(Reflect, Clone, Debug, PartialEq)]
+pub struct EditorPreview(pub Cow<'static, str>);
+
+impl EditorPreview {
+    pub const fn gltf(path: &'static str) -> Self {
+        EditorPreview(Cow::Borrowed(path))
     }
 }
 

@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use path_slash::PathExt as _;
+
 /// Files that still spawn a legacy control, with the reason each one is
 /// still here. Paths are relative to the repository root.
 const ALLOWED: &[(&str, &str)] = &[
@@ -107,8 +109,8 @@ fn no_control_is_spawned_on_the_legacy_button() {
         let relative = file
             .strip_prefix(&root)
             .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
+            .to_slash_lossy()
+            .into_owned();
         if ALLOWED.iter().any(|(path, _)| *path == relative) {
             continue;
         }

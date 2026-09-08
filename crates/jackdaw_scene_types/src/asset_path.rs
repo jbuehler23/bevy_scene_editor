@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use bevy::prelude::*;
+use path_slash::PathExt as _;
 
 /// Resolve an authored path against the assets directory.
 ///
@@ -26,17 +27,17 @@ pub fn to_asset_path(path: &str, assets_dir: Option<&Path>) -> String {
     if let Some(assets_dir) = assets_dir
         && let Ok(relative) = path.strip_prefix(dunce::simplified(assets_dir))
     {
-        return relative.to_string_lossy().into_owned();
+        return relative.to_slash_lossy().into_owned();
     }
     if !path.is_absolute() {
-        return path.to_string_lossy().into_owned();
+        return path.to_slash_lossy().into_owned();
     }
     warn!(
         "Cannot load '{}': file is outside the assets directory. \
          Move it into your project's assets/ folder.",
         path.display()
     );
-    path.to_string_lossy().into_owned()
+    path.to_slash_lossy().into_owned()
 }
 
 #[cfg(test)]
