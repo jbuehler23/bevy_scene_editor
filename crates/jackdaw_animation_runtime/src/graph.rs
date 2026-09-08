@@ -353,6 +353,10 @@ struct BoundClip {
     threshold: f32,
     /// Seconds the clip runs for, which an exit time is read against.
     duration: f32,
+    /// Assets-relative path of the file the clip came out of.
+    source: String,
+    /// Name the clip carries in that file.
+    clip: String,
 }
 
 /// One compiled state of a graph.
@@ -393,6 +397,18 @@ pub struct AnimationGraphBound {
 }
 
 impl AnimationGraphBound {
+    /// The source, name and player node of the clip a state leads with, which
+    /// for a blend is whichever of its clips currently carries the most weight.
+    pub(crate) fn leading_clip_of(
+        &self,
+        player: &AnimationPlayer,
+        state: &str,
+    ) -> Option<(&str, &str, AnimationNodeIndex)> {
+        let bound = self.states.get(*self.by_name.get(state)?)?;
+        let clip = leading_clip(player, bound)?;
+        Some((clip.source.as_str(), clip.clip.as_str(), clip.node))
+    }
+
     /// The node a state plays, when the state compiled.
     pub fn node(&self, state: &str) -> Option<AnimationNodeIndex> {
         self.by_name
@@ -892,6 +908,8 @@ fn compile_state(
                     node,
                     threshold: 0.0,
                     duration,
+                    source: clip_ref.source.clone(),
+                    clip: clip_ref.clip.clone(),
                 }],
             })
         }
@@ -905,6 +923,8 @@ fn compile_state(
                         node: graph.add_clip(handle, 1.0, blend),
                         threshold: point.threshold,
                         duration,
+                        source: point.clip.source.clone(),
+                        clip: point.clip.clip.clone(),
                     })
                 })
                 .collect();

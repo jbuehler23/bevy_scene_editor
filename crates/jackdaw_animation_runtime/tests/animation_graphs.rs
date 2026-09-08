@@ -18,12 +18,16 @@ use bevy::{
 };
 use jackdaw_animation_runtime::{
     AnimationBlendPoint, AnimationClipRef, AnimationCondition, AnimationConditionOp,
-    AnimationGraphAsset, AnimationGraphBound, AnimationGraphDef, AnimationGraphPlayback,
-    AnimationGraphRef, AnimationGraphSource, AnimationGraphState, AnimationMotion,
-    AnimationParameterDef, AnimationParameterKind, AnimationParams, AnimationRuntimePlugin,
-    AnimationSet, AnimationSetBound, AnimationSources, AnimationState, AnimationStateDef,
-    AnimationTransitionDef,
+    AnimationEvent, AnimationGraphAsset, AnimationGraphBound, AnimationGraphDef,
+    AnimationGraphPlayback, AnimationGraphRef, AnimationGraphSource, AnimationGraphState,
+    AnimationMotion, AnimationParameterDef, AnimationParameterKind, AnimationParams,
+    AnimationRuntimePlugin, AnimationSet, AnimationSetBound, AnimationSetSystems, AnimationSources,
+    AnimationState, AnimationStateDef, AnimationTransitionDef, ClipEvent,
 };
+
+/// Every clip event sent so far.
+#[derive(Resource, Default)]
+struct Fired(Vec<String>);
 
 fn animation_app() -> App {
     let mut app = App::new();
@@ -33,7 +37,29 @@ fn animation_app() -> App {
         .add_plugins(bevy::animation::AnimationPlugin)
         .add_plugins(AnimationRuntimePlugin);
     app.init_asset::<Gltf>();
+    app.init_resource::<Fired>();
+    app.add_systems(Update, collect_fired.after(AnimationSetSystems));
     app
+}
+
+fn collect_fired(mut sent: MessageReader<AnimationEvent>, mut out: ResMut<Fired>) {
+    out.0.extend(sent.read().map(|event| event.name.clone()));
+}
+
+/// Puts a named moment on a clip row under `owner`: a child named for the clip
+/// the events belong to, carrying one event.
+fn clip_marker(app: &mut App, owner: Entity, clip: &str, time: f32, name: &str) {
+    let row = app
+        .world_mut()
+        .spawn((Name::new(clip.to_string()), ChildOf(owner)))
+        .id();
+    app.world_mut().spawn((
+        ClipEvent {
+            time,
+            name: name.to_string(),
+        },
+        ChildOf(row),
+    ));
 }
 
 /// Runs one frame of a length the test picks rather than the wall clock's.
@@ -855,5 +881,101 @@ fn a_graph_reference_naming_no_file_leaves_the_set_beside_it_to_play() {
             .animation(node)
             .is_some(),
         "and its default state is playing on the skeleton"
+    );
+}
+
+#[test]
+fn a_blend_state_fires_the_markers_of_the_clip_it_leads_with() {
+    let mut app = animation_app();
+    let idle = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let walk = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Idle", idle), ("Walk", walk)]);
+    let def = AnimationGraphDef {
+        parameters: vec![AnimationParameterDef {
+            name: "speed".to_string(),
+            kind: AnimationParameterKind::Float,
+            default: 0.0,
+        }],
+        states: vec![AnimationGraphState {
+            name: "locomotion".to_string(),
+            motion: AnimationMotion::Blend1d {
+                parameter: "speed".to_string(),
+                points: vec![blend_point(0.0, "Idle"), blend_point(1.5, "Walk")],
+            },
+            ..AnimationGraphState::default()
+        }],
+        transitions: Vec::new(),
+        entry: "locomotion".to_string(),
+    };
+    let root = spawn_graphed_rig(&mut app, def, source);
+    clip_marker(&mut app, root, "Idle", 0.4, "breath");
+    clip_marker(&mut app, root, "Walk", 0.4, "footfall");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    params(&mut app, root).set_float("speed", 1.5);
+    for _ in 0..8 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        app.world().resource::<Fired>().0,
+        vec!["footfall".to_string()],
+        "the clip carrying the blend sends its markers, and the one at no \
+         weight sends none"
+    );
+}
+
+#[test]
+fn a_clip_that_takes_the_blend_partway_through_sends_no_marker_behind_it() {
+    let mut app = animation_app();
+    let idle = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let walk = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Idle", idle), ("Walk", walk)]);
+    let def = AnimationGraphDef {
+        parameters: vec![AnimationParameterDef {
+            name: "speed".to_string(),
+            kind: AnimationParameterKind::Float,
+            default: 0.0,
+        }],
+        states: vec![AnimationGraphState {
+            name: "locomotion".to_string(),
+            motion: AnimationMotion::Blend1d {
+                parameter: "speed".to_string(),
+                points: vec![blend_point(0.0, "Idle"), blend_point(1.5, "Walk")],
+            },
+            ..AnimationGraphState::default()
+        }],
+        transitions: Vec::new(),
+        entry: "locomotion".to_string(),
+    };
+    let root = spawn_graphed_rig(&mut app, def, source);
+    clip_marker(&mut app, root, "Walk", 0.2, "footfall");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..6 {
+        step(&mut app, millis(100));
+    }
+    params(&mut app, root).set_float("speed", 1.5);
+    for _ in 0..3 {
+        step(&mut app, millis(100));
+    }
+
+    assert!(
+        app.world().resource::<Fired>().0.is_empty(),
+        "a clip taking the lead at 0.6s starts from where it stands, rather \
+         than sending every marker below it at once: {:?}",
+        app.world().resource::<Fired>().0
+    );
+
+    for _ in 0..6 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        app.world().resource::<Fired>().0,
+        vec!["footfall".to_string()],
+        "and it sends the marker on the pass that reaches it"
     );
 }
