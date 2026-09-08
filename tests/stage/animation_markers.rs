@@ -37,6 +37,7 @@ fn call(app: &mut App, id: &'static str, params: &[(&'static str, PropertyValue)
 
 fn editor_on_the_test_project() -> App {
     let mut app = util::editor_test_app();
+    util::fixed_frame_clock(&mut app);
     app.init_resource::<FiredEvents>();
     app.add_systems(Last, record_fired_events);
     app.world_mut()
@@ -60,6 +61,19 @@ fn settle_until(app: &mut App, what: &str, ready: impl Fn(&App) -> bool) {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("{what} never happened");
+}
+
+/// The step [`util::fixed_frame_clock`] gives every frame, so a count of frames
+/// stands for a span of the previewed clip's own time.
+const FRAME_SECS: f64 = 0.016;
+
+/// Carry the preview `seconds` further into its clip, in whole frames of the
+/// fixed clock. The clip is 0.67 s long and does not loop, so spans stay under it.
+fn play_seconds(app: &mut App, seconds: f64) {
+    let frames = (seconds / FRAME_SECS).ceil() as u32;
+    for _ in 0..frames {
+        app.update();
+    }
 }
 
 /// A selected entity with a skeleton, holding one library clip on the
@@ -257,18 +271,14 @@ fn playing_past_a_marker_sends_an_animation_event_naming_the_entity() {
     add_event(&mut app, "hit", 0.1);
 
     call(&mut app, "animation.preview", &[]);
-    settle_until(&mut app, "the preview crossed the marker", |app| {
-        !fired(app).is_empty()
-    });
+    play_seconds(&mut app, 0.2);
 
     assert_eq!(
         fired(&app),
         vec![(rig, "hit".to_string())],
         "the event names the entity the clip is playing on"
     );
-    for _ in 0..30 {
-        app.update();
-    }
+    play_seconds(&mut app, 0.2);
     assert_eq!(
         fired(&app).len(),
         1,
