@@ -22,35 +22,48 @@ pub struct ClipEvent {
     pub name: String,
 }
 
-/// How far through its clip playback has come, written by whatever plays it.
-///
-/// Runtime only: the pair of times is a per-frame reading, not something a
-/// document holds.
+/// How far through its clip playback has come, written each frame by
+/// whatever plays it; never saved.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ClipPlayhead {
     /// Where playback stood when events last fired.
     pub last: f32,
     /// Where it stands now.
     pub now: f32,
+    /// How playback travelled from one to the other.
+    pub pass: ClipPass,
+}
+
+/// The way playback moved through a clip between two readings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ClipPass {
+    /// Onwards through the clip.
+    #[default]
+    Forward,
+    /// Onwards, off the end of the clip and on again from the start.
+    ForwardWrapped,
+    /// Back through the clip.
+    Backward,
+    /// Back off the start of the clip and on again from the end.
+    BackwardWrapped,
 }
 
 impl ClipPlayhead {
     /// Move the playhead to `now`, keeping where it came from.
-    pub fn advance_to(&mut self, now: f32) {
+    pub fn advance_to(&mut self, now: f32, pass: ClipPass) {
         self.last = self.now;
         self.now = now;
+        self.pass = pass;
     }
 
-    /// Whether the span since the last reading covers `time`.
-    ///
-    /// The span is half open on the left so a playhead parked on a key does
-    /// not fire it again next tick. A span that runs backwards is a clip that
-    /// wrapped, so it covers the tail of the clip and the head of it both.
+    /// Whether the span since the last reading covers `time`: closed at the end
+    /// playback moves towards, open at the one it left, both ends on a wrap.
     fn covers(&self, time: f32) -> bool {
-        if self.now >= self.last {
-            time > self.last && time <= self.now
-        } else {
-            time > self.last || time <= self.now
+        match self.pass {
+            ClipPass::Forward => time >= self.last && time < self.now,
+            ClipPass::ForwardWrapped => time >= self.last || time < self.now,
+            ClipPass::Backward => time >= self.now && time < self.last,
+            ClipPass::BackwardWrapped => time >= self.now || time < self.last,
         }
     }
 }
@@ -87,6 +100,7 @@ pub fn fire_clip_events(
             }
         }
         playhead.last = playhead.now;
+        playhead.pass = ClipPass::Forward;
     }
 }
 
@@ -120,10 +134,20 @@ mod tests {
         clip: Entity,
         now: f32,
     ) -> Vec<AnimationEvent> {
+        moved_to(app, cursor, clip, now, ClipPass::Forward)
+    }
+
+    fn moved_to(
+        app: &mut App,
+        cursor: &mut bevy::ecs::message::MessageCursor<AnimationEvent>,
+        clip: Entity,
+        now: f32,
+        pass: ClipPass,
+    ) -> Vec<AnimationEvent> {
         app.world_mut()
             .get_mut::<ClipPlayhead>(clip)
             .expect("the clip carries a playhead")
-            .now = now;
+            .advance_to(now, pass);
         app.update();
         cursor
             .read(app.world().resource::<Messages<AnimationEvent>>())
@@ -166,12 +190,43 @@ mod tests {
         let mut seen = cursor(&app);
         events_after(&mut app, &mut seen, clip, 0.9);
 
-        let fired = events_after(&mut app, &mut seen, clip, 0.2);
+        let fired = moved_to(&mut app, &mut seen, clip, 0.2, ClipPass::ForwardWrapped);
 
         assert_eq!(
             fired.len(),
             1,
             "wrapping past the key should send it: {fired:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_on_the_first_frame_of_a_clip_fires_as_playback_leaves_it() {
+        let (mut app, _, clip) = world_with_an_event_at(0.0);
+        let mut seen = cursor(&app);
+
+        let fired = events_after(&mut app, &mut seen, clip, 0.1);
+
+        assert_eq!(
+            fired.len(),
+            1,
+            "a key at the very start of the clip should send once the first \
+             span leaves it: {fired:?}"
+        );
+    }
+
+    #[test]
+    fn a_wrap_that_lands_where_it_started_fires_the_whole_clip() {
+        let (mut app, _, clip) = world_with_an_event_at(0.6);
+        let mut seen = cursor(&app);
+        events_after(&mut app, &mut seen, clip, 0.2);
+
+        let fired = moved_to(&mut app, &mut seen, clip, 0.2, ClipPass::ForwardWrapped);
+
+        assert_eq!(
+            fired.len(),
+            1,
+            "a clip shorter than the frame that ran it comes back to the same \
+             time having passed every key: {fired:?}"
         );
     }
 }

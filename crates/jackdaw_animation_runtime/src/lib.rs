@@ -22,7 +22,7 @@ use std::{
 
 use bevy::{
     animation::{
-        AnimatedBy, AnimationTargetId, RepeatAnimation,
+        ActiveAnimation, AnimatedBy, AnimationTargetId, RepeatAnimation,
         graph::{AnimationGraph, AnimationGraphHandle, AnimationNodeIndex},
         transition::AnimationTransitions,
     },
@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 pub mod events;
 pub mod graph;
 
-pub use events::{AnimationEvent, ClipEvent, ClipPlayhead, fire_clip_events};
+pub use events::{AnimationEvent, ClipEvent, ClipPass, ClipPlayhead, fire_clip_events};
 pub use graph::{
     AnimationBlendPoint, AnimationClipRef, AnimationCondition, AnimationConditionOp,
     AnimationGraphAsset, AnimationGraphBound, AnimationGraphDef, AnimationGraphLoadError,
@@ -187,7 +187,6 @@ impl Plugin for AnimationRuntimePlugin {
         }
         app.add_message::<AnimationStateFinished>()
             .add_message::<AnimationEvent>()
-            .add_systems(Update, fire_clip_events)
             .add_systems(
                 Update,
                 (
@@ -219,6 +218,18 @@ impl Plugin for AnimationRuntimePlugin {
                             .and_then(resource_exists::<Assets<AnimationGraph>>)
                             .and_then(resource_exists::<Assets<AnimationGraphAsset>>),
                     ),
+            )
+            .add_systems(
+                Update,
+                (write_clip_playheads, fire_clip_events)
+                    .chain()
+                    .in_set(AnimationSetSystems)
+                    .after(apply_animation_state)
+                    .after(graph::advance_animation_graphs)
+                    // Before a `then` writes the state it moves on to, so
+                    // the keys at the tail of the clip that ran out are still
+                    // read against that clip.
+                    .before(report_finished_states),
             );
     }
 }
@@ -446,6 +457,135 @@ fn apply_animation_state(
             };
             play_state(def, node, &mut player, &mut transitions);
         }
+    }
+}
+
+/// What an entity is playing, and where its playhead stands.
+#[derive(Clone, Copy)]
+struct PlayingClip<'a> {
+    /// The file the clip came out of, as the set or graph names it.
+    source: &'a str,
+    /// The clip's name in that file.
+    clip: &'a str,
+    /// Seconds into the clip, as of the last tick.
+    seek: f32,
+    /// The way that tick moved through the clip.
+    pass: ClipPass,
+}
+
+impl<'a> PlayingClip<'a> {
+    /// Reads a clip's playhead and how it travelled off the animation playing
+    /// it; a finished run reads as past the end, not as a wrap.
+    fn read(source: &'a str, clip: &'a str, active: &ActiveAnimation) -> Self {
+        let wrapped = active.just_completed() && !active.is_finished();
+        Self {
+            source,
+            clip,
+            seek: active.seek_time(),
+            pass: match (active.is_playback_reversed(), wrapped) {
+                (false, false) => ClipPass::Forward,
+                (false, true) => ClipPass::ForwardWrapped,
+                (true, false) => ClipPass::Backward,
+                (true, true) => ClipPass::BackwardWrapped,
+            },
+        }
+    }
+}
+
+/// Writes each bound entity's playhead onto the clip entity that carries
+/// that clip's events; a graph beside a set drives the entity alone.
+fn write_clip_playheads(
+    mut commands: Commands,
+    sets: Query<
+        (Entity, &AnimationSet, &AnimationSetBound, &AnimationState),
+        Without<AnimationGraphBound>,
+    >,
+    graphs: Query<(Entity, &AnimationGraphBound, &graph::AnimationGraphPlayback)>,
+    players: Query<&AnimationPlayer>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    marked: Query<(), With<ClipEvent>>,
+    mut playheads: Query<&mut ClipPlayhead>,
+) {
+    for (owner, set, bound, state) in &sets {
+        let playing = resolve_state(set, &bound.nodes, &state.0).and_then(|(def, node)| {
+            let active = players.get(bound.player).ok()?.animation(node)?;
+            let source = set.sources.get(def.source).map_or("", String::as_str);
+            Some(PlayingClip::read(source, def.clip.as_str(), active))
+        });
+        write_playheads_under(
+            owner,
+            playing,
+            &mut commands,
+            &children,
+            &names,
+            &marked,
+            &mut playheads,
+        );
+    }
+    for (owner, bound, playback) in &graphs {
+        let playing = players.get(bound.player).ok().and_then(|player| {
+            let (source, clip, node) = bound.leading_clip_of(player, &playback.state)?;
+            Some(PlayingClip::read(source, clip, player.animation(node)?))
+        });
+        write_playheads_under(
+            owner,
+            playing,
+            &mut commands,
+            &children,
+            &names,
+            &marked,
+            &mut playheads,
+        );
+    }
+}
+
+/// Moves the playhead of the clip entity directly under `owner` that stands
+/// for the playing clip, seeds one that just started, and clears the rest.
+fn write_playheads_under(
+    owner: Entity,
+    playing: Option<PlayingClip<'_>>,
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+    marked: &Query<(), With<ClipEvent>>,
+    playheads: &mut Query<&mut ClipPlayhead>,
+) {
+    let Ok(kids) = children.get(owner) else {
+        return;
+    };
+    for row in kids.iter() {
+        let holds_events = children
+            .get(row)
+            .is_ok_and(|keys| keys.iter().any(|key| marked.contains(key)));
+        if !holds_events {
+            continue;
+        }
+        let name = names.get(row).map_or("", Name::as_str);
+        let played = playing.filter(|clip| stands_for_clip(name, clip.source, clip.clip));
+        match (playheads.get_mut(row), played) {
+            (Ok(mut playhead), Some(clip)) => playhead.advance_to(clip.seek, clip.pass),
+            (Ok(_), None) => {
+                commands.entity(row).remove::<ClipPlayhead>();
+            }
+            (Err(_), Some(clip)) => {
+                commands.entity(row).insert(ClipPlayhead {
+                    last: clip.seek,
+                    now: clip.seek,
+                    pass: ClipPass::Forward,
+                });
+            }
+            (Err(_), None) => {}
+        }
+    }
+}
+
+/// Whether a clip entity name stands for `clip` out of `source`: a bare
+/// clip name, or `<file>#<clip>` when the file matters.
+fn stands_for_clip(name: &str, source: &str, clip: &str) -> bool {
+    match name.split_once('#') {
+        Some((file, named)) => file == source && named == clip,
+        None => name == clip,
     }
 }
 

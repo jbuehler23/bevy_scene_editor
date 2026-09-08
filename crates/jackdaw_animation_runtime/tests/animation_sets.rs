@@ -19,13 +19,17 @@ use bevy::{
     time::TimeUpdateStrategy,
 };
 use jackdaw_animation_runtime::{
-    AnimationRuntimePlugin, AnimationSet, AnimationSetBound, AnimationSetSystems, AnimationSources,
-    AnimationState, AnimationStateDef, AnimationStateFinished,
+    AnimationEvent, AnimationRuntimePlugin, AnimationSet, AnimationSetBound, AnimationSetSystems,
+    AnimationSources, AnimationState, AnimationStateDef, AnimationStateFinished, ClipEvent,
 };
 
 /// Every state reported finished so far.
 #[derive(Resource, Default)]
 struct Finished(Vec<String>);
+
+/// Every clip event sent so far, with the entity it named.
+#[derive(Resource, Default)]
+struct Fired(Vec<(Entity, String)>);
 
 fn animation_app() -> App {
     let mut app = App::new();
@@ -36,8 +40,42 @@ fn animation_app() -> App {
         .add_plugins(AnimationRuntimePlugin);
     app.init_asset::<Gltf>();
     app.init_resource::<Finished>();
-    app.add_systems(Update, collect_finished.after(AnimationSetSystems));
+    app.init_resource::<Fired>();
+    app.add_systems(
+        Update,
+        (collect_finished, collect_fired).after(AnimationSetSystems),
+    );
     app
+}
+
+fn collect_fired(mut sent: MessageReader<AnimationEvent>, mut out: ResMut<Fired>) {
+    out.0
+        .extend(sent.read().map(|event| (event.entity, event.name.clone())));
+}
+
+/// Puts a named moment on a clip row under `owner`: a child named for the clip
+/// the events belong to, carrying one event.
+fn clip_marker(app: &mut App, owner: Entity, clip: &str, time: f32, name: &str) {
+    let row = app
+        .world_mut()
+        .spawn((Name::new(clip.to_string()), ChildOf(owner)))
+        .id();
+    app.world_mut().spawn((
+        ClipEvent {
+            time,
+            name: name.to_string(),
+        },
+        ChildOf(row),
+    ));
+}
+
+fn fired_names(app: &App) -> Vec<String> {
+    app.world()
+        .resource::<Fired>()
+        .0
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect()
 }
 
 fn collect_finished(
@@ -114,11 +152,16 @@ fn spawn_mesh_nodes(app: &mut App, parent: Entity, names: &[&str]) {
 
 /// A clip that slides the bone at `path` one unit along X over a second.
 fn sliding_clip(app: &mut App, path: &[&str]) -> Handle<AnimationClip> {
+    sliding_clip_lasting(app, path, 1.0)
+}
+
+/// The same slide over a length the test picks.
+fn sliding_clip_lasting(app: &mut App, path: &[&str], seconds: f32) -> Handle<AnimationClip> {
     let names: Vec<Name> = path
         .iter()
         .map(|name| Name::new(name.to_string()))
         .collect();
-    let curve = AnimatableKeyframeCurve::new([(0.0, Vec3::ZERO), (1.0, Vec3::X)])
+    let curve = AnimatableKeyframeCurve::new([(0.0, Vec3::ZERO), (seconds, Vec3::X)])
         .expect("two keyframes make a curve");
     let mut clip = AnimationClip::default();
     clip.add_curve_to_target(
@@ -672,5 +715,322 @@ fn an_unknown_state_name_is_refused_with_one_warning() {
             .get_main_animation(),
         Some(idle),
         "and the state that was playing keeps playing"
+    );
+}
+
+#[test]
+fn a_marker_fires_once_on_every_pass_of_a_looping_clip() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Walk", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "walk".to_string(),
+            clip: "Walk".to_string(),
+            ..AnimationStateDef::default()
+        }],
+        "walk",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Walk", 0.4, "step");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..30 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        app.world().resource::<Fired>().0,
+        vec![(root, "step".to_string()); 3],
+        "a second-long clip run for three seconds should send its 0.4s marker \
+         once on each pass, named against the entity the clip animates"
+    );
+}
+
+#[test]
+fn a_one_shot_state_fires_its_marker_once_and_says_nothing_after_it_ends() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Hit", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "hit".to_string(),
+            clip: "Hit".to_string(),
+            looped: false,
+            ..AnimationStateDef::default()
+        }],
+        "hit",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Hit", 0.4, "impact");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..25 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        vec!["impact".to_string()],
+        "a clip that runs once holds its last frame, and a marker already \
+         passed must not send again while it sits there"
+    );
+}
+
+#[test]
+fn a_state_left_before_its_marker_never_fires_it() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Idle", clip.clone()), ("Walk", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![
+            AnimationStateDef {
+                name: "idle".to_string(),
+                clip: "Idle".to_string(),
+                ..AnimationStateDef::default()
+            },
+            AnimationStateDef {
+                name: "walk".to_string(),
+                clip: "Walk".to_string(),
+                ..AnimationStateDef::default()
+            },
+        ],
+        "idle",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Idle", 0.4, "blink");
+    clip_marker(&mut app, root, "Walk", 0.4, "stride");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..4 {
+        step(&mut app, millis(100));
+    }
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationState("walk".to_string()));
+    for _ in 0..8 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        vec!["stride".to_string()],
+        "leaving idle at 0.3s drops its 0.4s marker rather than sending it \
+         late, while the state moved to sends its own"
+    );
+}
+
+#[test]
+fn a_marker_at_the_head_of_a_clip_fires_on_every_pass_of_it() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Walk", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "walk".to_string(),
+            clip: "Walk".to_string(),
+            ..AnimationStateDef::default()
+        }],
+        "walk",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Walk", 0.0, "plant");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..25 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        vec!["plant".to_string(); 3],
+        "a marker sitting on the first frame is passed once on the way out of \
+         it and once on every pass after"
+    );
+}
+
+#[test]
+fn a_state_played_backwards_sends_each_marker_once_a_pass() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Walk", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "walk".to_string(),
+            clip: "Walk".to_string(),
+            speed: -1.0,
+            ..AnimationStateDef::default()
+        }],
+        "walk",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Walk", 0.4, "step");
+    clip_marker(&mut app, root, "Walk", 0.7, "land");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..25 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        ["land", "step", "land", "step", "land"].map(str::to_string),
+        "a clip walked backwards passes each marker once a lap, in the order \
+         it meets them, rather than a whole clip of them at the wrap"
+    );
+}
+
+#[test]
+fn a_clip_shorter_than_the_frame_running_it_still_fires_its_marker() {
+    let mut app = animation_app();
+    let clip = sliding_clip_lasting(&mut app, &["Armature", "Hips"], 0.1);
+    let source = source_holding(&mut app, &[("Flash", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "flash".to_string(),
+            clip: "Flash".to_string(),
+            ..AnimationStateDef::default()
+        }],
+        "flash",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Flash", 0.08, "tick");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..6 {
+        step(&mut app, millis(200));
+    }
+
+    let fired = fired_names(&app);
+    assert_eq!(
+        fired,
+        vec!["tick".to_string(); 5],
+        "a frame that laps a clip more than once leaves the playhead where it \
+         found it, and the marker it swept past must still send: {fired:?}"
+    );
+}
+
+#[test]
+fn a_paused_player_sends_nothing_until_it_is_let_go() {
+    let mut app = animation_app();
+    let clip = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let source = source_holding(&mut app, &[("Walk", clip)]);
+    let set = walking_set(
+        vec!["rig.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "walk".to_string(),
+            clip: "Walk".to_string(),
+            ..AnimationStateDef::default()
+        }],
+        "walk",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![source]));
+    clip_marker(&mut app, root, "Walk", 0.4, "step");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    let node = node_for(&app, root, "walk");
+    let armature = named(&mut app, "Armature");
+    app.world_mut()
+        .get_mut::<AnimationPlayer>(armature)
+        .expect("the skeleton carries a player")
+        .animation_mut(node)
+        .expect("the state is playing")
+        .pause();
+    for _ in 0..20 {
+        step(&mut app, millis(100));
+    }
+
+    assert!(
+        fired_names(&app).is_empty(),
+        "a playhead that is not moving passes nothing: {:?}",
+        fired_names(&app)
+    );
+
+    app.world_mut()
+        .get_mut::<AnimationPlayer>(armature)
+        .expect("the skeleton carries a player")
+        .animation_mut(node)
+        .expect("the state is playing")
+        .resume();
+    for _ in 0..6 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        vec!["step".to_string()],
+        "and it sends again once playback moves on"
+    );
+}
+
+#[test]
+fn a_marker_row_naming_its_source_file_fires_only_for_that_source() {
+    let mut app = animation_app();
+    let first = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let second = sliding_clip(&mut app, &["Armature", "Hips"]);
+    let one = source_holding(&mut app, &[("Walk", first)]);
+    let two = source_holding(&mut app, &[("Walk", second)]);
+    let set = walking_set(
+        vec!["one.glb".to_string(), "two.glb".to_string()],
+        vec![AnimationStateDef {
+            name: "walk".to_string(),
+            source: 1,
+            clip: "Walk".to_string(),
+            ..AnimationStateDef::default()
+        }],
+        "walk",
+    );
+    let root = spawn_rig(&mut app, set, "Body", &["Hips"]);
+    app.world_mut()
+        .entity_mut(root)
+        .insert(AnimationSources(vec![one, two]));
+    clip_marker(&mut app, root, "one.glb#Walk", 0.4, "wrong file");
+    clip_marker(&mut app, root, "two.glb#Walk", 0.4, "right file");
+
+    step(&mut app, Duration::ZERO);
+    step(&mut app, Duration::ZERO);
+    for _ in 0..8 {
+        step(&mut app, millis(100));
+    }
+
+    assert_eq!(
+        fired_names(&app),
+        vec!["right file".to_string()],
+        "two files holding a clip of the same name are told apart by a row \
+         named `<file>#<clip>`"
     );
 }
