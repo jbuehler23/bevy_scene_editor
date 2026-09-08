@@ -1,6 +1,7 @@
 use crate::util;
 
 use bevy::prelude::*;
+use path_slash::PathExt as _;
 
 #[test]
 fn prefab_components_register() {
@@ -362,7 +363,7 @@ fn load_resolves_isa_and_caches_prefab() {
                 }}
             }}]
         }}"#,
-        prefab_path.to_string_lossy().replace('\\', "/")
+        prefab_path.to_slash_lossy()
     );
     std::fs::write(&scene_path, scene_jsn).unwrap();
 
@@ -420,7 +421,7 @@ fn load_resolves_isa_spawns_inherited_entities() {
                 }}
             }}]
         }}"#,
-        prefab_path.to_string_lossy().replace('\\', "/")
+        prefab_path.to_slash_lossy()
     );
     std::fs::write(&scene_path, scene_jsn).unwrap();
 
@@ -490,7 +491,7 @@ fn a_legacy_scene_resolves_a_legacy_prefab_it_inherits_from() {
                 }}
             }}]
         }}"#,
-        prefab_path.to_string_lossy().replace('\\', "/")
+        prefab_path.to_slash_lossy()
     );
     std::fs::write(&scene_path, scene_jsn).unwrap();
 
@@ -544,7 +545,7 @@ fn save_writes_sparse_deltas_only() {
                 }}
             }}]
         }}"#,
-        prefab_path.to_string_lossy().replace('\\', "/")
+        prefab_path.to_slash_lossy()
     );
     std::fs::write(&scene_path, scene_jsn).unwrap();
 
@@ -668,7 +669,7 @@ fn scene_referencing(prefab: &std::path::Path) -> String {
             }}
         }}]
     }}"#,
-        prefab.to_string_lossy().replace('\\', "/")
+        prefab.to_slash_lossy()
     )
 }
 
@@ -1360,7 +1361,7 @@ fn unpack_child_adds_to_deleted_and_creates_standalone_node() {
                     }}
                 ]
             }}"#,
-            prefab_path.to_string_lossy().replace('\\', "/")
+            prefab_path.to_slash_lossy()
         ),
     )
     .unwrap();
@@ -3951,7 +3952,7 @@ fn revert_all_reverts_field_inherited_through_a_nested_prefab() {
              jackdaw::prefab::components::Prefab\n\
              jackdaw::prefab::components::PrefabEntityId(0)\n\
              jackdaw::prefab::components::IsA {{ source: \"{}\", deleted: [] }}",
-            base_path.to_string_lossy().replace('\\', "/")
+            base_path.to_slash_lossy()
         ),
     )
     .unwrap();

@@ -11,6 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
+use path_slash::PathExt as _;
+
 use jackdaw_bsn::{
     BsnField, BsnPatch, BsnStructData, BsnStructFields, BsnTupleStructData, BsnValue, SceneBsnAst,
 };
@@ -80,7 +82,7 @@ pub fn relativize_isa_sources(ast: &mut SceneBsnAst, document_dir: &Path) {
             continue;
         };
         let deleted = read_isa_deleted(ast, node);
-        let spelling = relative.to_string_lossy().replace('\\', "/");
+        let spelling = relative.to_slash_lossy();
         set_whole_component(ast, node, ISA_TYPE, isa_value(&spelling, &deleted));
     }
 }
@@ -107,7 +109,7 @@ pub fn absolutize_isa_sources(ast: &mut SceneBsnAst, document_dir: &Path) {
             ast,
             node,
             ISA_TYPE,
-            isa_value(&full.to_string_lossy(), &deleted),
+            isa_value(&full.to_slash_lossy(), &deleted),
         );
     }
 }
@@ -283,27 +285,33 @@ mod tests {
 
     #[test]
     fn a_relative_source_resolves_against_the_documents_own_directory() {
+        let dir = std::path::absolute("/game/assets/zones").expect("cwd");
         assert_eq!(
-            source_path(
-                Path::new("props/crate.bsn"),
-                Path::new("/game/assets/zones")
-            ),
-            PathBuf::from("/game/assets/zones/props/crate.bsn")
+            source_path(Path::new("props/crate.bsn"), &dir),
+            std::path::absolute("/game/assets/zones/props/crate.bsn").expect("cwd")
         );
     }
 
     #[test]
     fn an_absolute_source_is_taken_as_written() {
+        let source = std::path::absolute("/elsewhere/crate.bsn").expect("cwd");
         assert_eq!(
-            source_path(Path::new("/elsewhere/crate.bsn"), Path::new("/game/assets")),
-            PathBuf::from("/elsewhere/crate.bsn")
+            source_path(&source, &std::path::absolute("/game/assets").expect("cwd")),
+            source
         );
     }
 
     #[test]
     fn saving_spells_an_absolute_source_relative_to_the_scene() {
-        let mut ast = scene_with_source("/game/assets/props/crate.bsn");
-        relativize_isa_sources(&mut ast, Path::new("/game/assets/zones"));
+        let source = std::path::absolute("/game/assets/props/crate.bsn")
+            .expect("cwd")
+            .to_slash_lossy()
+            .into_owned();
+        let mut ast = scene_with_source(&source);
+        relativize_isa_sources(
+            &mut ast,
+            &std::path::absolute("/game/assets/zones").expect("cwd"),
+        );
         assert_eq!(source_of(&ast), "../props/crate.bsn");
     }
 
@@ -311,15 +319,22 @@ mod tests {
     fn a_document_with_no_directory_keeps_the_source_it_had() {
         // The unsaved-scene and in-memory-capture case: relativizing against
         // a placeholder would produce a path that resolves nowhere.
-        let mut ast = scene_with_source("/game/assets/props/crate.bsn");
+        let source = std::path::absolute("/game/assets/props/crate.bsn")
+            .expect("cwd")
+            .to_slash_lossy()
+            .into_owned();
+        let mut ast = scene_with_source(&source);
         relativize_isa_sources(&mut ast, Path::new("."));
-        assert_eq!(source_of(&ast), "/game/assets/props/crate.bsn");
+        assert_eq!(source_of(&ast), source);
     }
 
     #[test]
     fn a_source_that_is_already_relative_is_left_alone() {
         let mut ast = scene_with_source("props/crate.bsn");
-        relativize_isa_sources(&mut ast, Path::new("/game/assets/zones"));
+        relativize_isa_sources(
+            &mut ast,
+            &std::path::absolute("/game/assets/zones").expect("cwd"),
+        );
         assert_eq!(source_of(&ast), "props/crate.bsn");
     }
 
@@ -328,25 +343,42 @@ mod tests {
         // A containment check reads `..` as an ordinary directory name, so an
         // unfolded source can point anywhere while looking like it points
         // inside.
-        let mut ast = scene_with_source("/game/assets/../../etc/passwd.bsn");
-        absolutize_isa_sources(&mut ast, Path::new("/game/assets"));
-        assert_eq!(source_of(&ast), "/etc/passwd.bsn");
+        let source = std::path::absolute("/game/assets/../../etc/passwd.bsn")
+            .expect("cwd")
+            .to_slash_lossy()
+            .into_owned();
+        let mut ast = scene_with_source(&source);
+        absolutize_isa_sources(&mut ast, &std::path::absolute("/game/assets").expect("cwd"));
+        assert_eq!(
+            PathBuf::from(source_of(&ast)),
+            std::path::absolute("/etc/passwd.bsn").expect("cwd")
+        );
     }
 
     #[test]
     fn loading_names_the_file_a_relative_source_meant() {
         let mut ast = scene_with_source("../props/crate.bsn");
-        absolutize_isa_sources(&mut ast, Path::new("/game/assets/zones"));
-        assert_eq!(source_of(&ast), "/game/assets/props/crate.bsn");
+        absolutize_isa_sources(
+            &mut ast,
+            &std::path::absolute("/game/assets/zones").expect("cwd"),
+        );
+        assert_eq!(
+            PathBuf::from(source_of(&ast)),
+            std::path::absolute("/game/assets/props/crate.bsn").expect("cwd")
+        );
     }
 
     #[test]
     fn a_saved_source_survives_the_round_trip_it_was_written_for() {
-        let scene_dir = Path::new("/game/assets/zones");
-        let mut ast = scene_with_source("/game/assets/props/crate.bsn");
-        relativize_isa_sources(&mut ast, scene_dir);
-        absolutize_isa_sources(&mut ast, scene_dir);
-        relativize_isa_sources(&mut ast, scene_dir);
+        let scene_dir = std::path::absolute("/game/assets/zones").expect("cwd");
+        let source = std::path::absolute("/game/assets/props/crate.bsn")
+            .expect("cwd")
+            .to_slash_lossy()
+            .into_owned();
+        let mut ast = scene_with_source(&source);
+        relativize_isa_sources(&mut ast, &scene_dir);
+        absolutize_isa_sources(&mut ast, &scene_dir);
+        relativize_isa_sources(&mut ast, &scene_dir);
         assert_eq!(
             source_of(&ast),
             "../props/crate.bsn",

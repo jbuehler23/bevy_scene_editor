@@ -4,6 +4,7 @@ use bevy::asset::{AssetServer, ReflectHandle};
 use bevy::platform::collections::HashMap;
 use bevy::reflect::enums::VariantType;
 use bevy::reflect::{PartialReflect, ReflectRef, TypeRegistry};
+use path_slash::PathExt as _;
 
 use super::{BsnField, BsnPatch, BsnStructData, BsnStructFields, BsnTupleStructData, BsnValue};
 
@@ -26,9 +27,9 @@ impl BsnAssetContext<'_> {
         if let Some(path) = self.asset_server.get_path(id) {
             let path_str = path.to_string();
             if let Some(relative) = pathdiff::diff_paths(&path_str, self.parent_path) {
-                return relative.to_string_lossy().replace('\\', "/");
+                return relative.to_slash_lossy().into_owned();
             }
-            return path_str.replace('\\', "/");
+            return Path::new(&path_str).to_slash_lossy().into_owned();
         }
         if let Some(names) = self.asset_names
             && let Some(name) = names.get(&id)

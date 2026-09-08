@@ -166,6 +166,7 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 dirs.workspace = true
 regex.workspace = true
 pathdiff.workspace = true
+path-slash.workspace = true
 dunce = "1.0.5"
 notify = "8"
 ctrlc = "3"
@@ -252,7 +253,7 @@ jackdaw_fuzzy = { version = "0.19.0", path = "crates/jackdaw_fuzzy" }
 jackdaw_localization = { version = "0.19.0", path = "crates/jackdaw_localization" }
 glam = { version = "0.32", features = ["serde"] }
 noise = "0.9"
-rand = "0.9"
+rand = "0.10"
 serde = "1"
 lucide-icons = "0.563"
 serde_json = "1"
@@ -294,6 +295,7 @@ anyhow = { version = "1", default-features = false }
 dirs = "6"
 regex = "1"
 pathdiff = "0.2"
+path-slash = "0.2.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 winit = "0.30.13"
@@ -352,6 +354,7 @@ jackdaw_runtime = { workspace = true, features = ["terrain", "physics"] }
 libloading = "0.8"
 serde_json.workspace = true
 tempfile = "3"
+path-slash.workspace = true
 # Pulled in so cargo builds the fixture cdylib as part of the
 # workspace test-target graph. `tests/dylib_loading.rs` dlopens the
 # resulting `.so` by path - it doesn't reference the rlib side.

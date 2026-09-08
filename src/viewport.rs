@@ -14,6 +14,7 @@ use bevy::{
 use jackdaw_api::prelude::*;
 use jackdaw_api_internal::keymap::PresetInput;
 use jackdaw_camera::{JackdawCameraPlugin, JackdawCameraSettings};
+use path_slash::PathExt as _;
 
 use bevy::ecs::system::SystemParam;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
@@ -733,7 +734,7 @@ fn handle_viewport_drop(
     }
 
     if let Some(image_path) = image_drag {
-        let path = image_path.to_string_lossy().replace('\\', "/");
+        let path = image_path.to_slash_lossy().into_owned();
         commands.queue(move |world: &mut World| {
             crate::reference_image::spawn_reference_image_in_world(world, &path, snapped_pos);
         });

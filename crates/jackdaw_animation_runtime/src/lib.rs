@@ -22,10 +22,11 @@ use std::{
 
 use bevy::{
     animation::{
-        AnimatedBy, AnimationTargetId, RepeatAnimation,
+        ActiveAnimation, AnimatedBy, AnimationTargetId, RepeatAnimation,
         graph::{AnimationGraph, AnimationGraphHandle, AnimationNodeIndex},
         transition::AnimationTransitions,
     },
+    asset::AssetPlugin,
     gltf::Gltf,
     mesh::skinning::SkinnedMesh,
     prelude::*,
@@ -33,8 +34,17 @@ use bevy::{
 use serde::{Deserialize, Serialize};
 
 pub mod events;
+pub mod graph;
 
-pub use events::{AnimationEvent, ClipEvent, ClipPlayhead, fire_clip_events};
+pub use events::{AnimationEvent, ClipEvent, ClipPass, ClipPlayhead, fire_clip_events};
+pub use graph::{
+    AnimationBlendPoint, AnimationClipRef, AnimationCondition, AnimationConditionOp,
+    AnimationGraphAsset, AnimationGraphBound, AnimationGraphDef, AnimationGraphLoadError,
+    AnimationGraphLoader, AnimationGraphPlayback, AnimationGraphRef, AnimationGraphSource,
+    AnimationGraphState, AnimationGraphTransition, AnimationMotion, AnimationParameterDef,
+    AnimationParameterKind, AnimationParams, AnimationTransitionDef, parse_animation_graph,
+    register_animation_graph_types,
+};
 
 /// The clips an entity can play and the states that choose between them.
 ///
@@ -145,28 +155,38 @@ pub struct AnimationSetBound {
 /// Sent when a non-looping state reaches the end of its clip.
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub struct AnimationStateFinished {
-    /// The entity carrying the [`AnimationSet`].
+    /// The entity carrying the [`AnimationSet`] or the [`AnimationGraphRef`].
     pub entity: Entity,
     /// The state that ran out.
     pub state: String,
 }
 
-/// The systems that bind animation sets and play the state they are asked for.
+/// The systems that bind animation sets and graphs and play the state they
+/// are asked for.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnimationSetSystems;
 
-/// Binds authored animation sets to their skeletons and plays their states.
+/// Binds authored animation sets and graphs to their skeletons and plays the
+/// state each asks for.
 ///
-/// Add it wherever scenes carrying an [`AnimationSet`] are spawned. Nothing
-/// here touches an entity without one.
+/// Add it wherever scenes carrying an [`AnimationSet`] or an
+/// [`AnimationGraphRef`] are spawned. Nothing here touches an entity carrying
+/// neither.
 pub struct AnimationRuntimePlugin;
 
 impl Plugin for AnimationRuntimePlugin {
     fn build(&self, app: &mut App) {
         register_animation_set_types(app);
+        graph::register_animation_graph_types(app);
+        // The graph asset and its loader need an asset server to register
+        // against; without one this stays the set half alone, which is what an
+        // app that only authors documents wants.
+        if app.is_plugin_added::<AssetPlugin>() {
+            app.init_asset::<AnimationGraphAsset>()
+                .init_asset_loader::<AnimationGraphLoader>();
+        }
         app.add_message::<AnimationStateFinished>()
             .add_message::<AnimationEvent>()
-            .add_systems(Update, fire_clip_events)
             .add_systems(
                 Update,
                 (
@@ -182,6 +202,34 @@ impl Plugin for AnimationRuntimePlugin {
                             .and_then(resource_exists::<Assets<Gltf>>)
                             .and_then(resource_exists::<Assets<AnimationGraph>>),
                     ),
+            )
+            .add_systems(
+                Update,
+                (
+                    graph::rebind_edited_graphs,
+                    graph::bind_animation_graphs,
+                    graph::advance_animation_graphs,
+                )
+                    .chain()
+                    .in_set(AnimationSetSystems)
+                    .run_if(
+                        resource_exists::<AssetServer>
+                            .and_then(resource_exists::<Assets<Gltf>>)
+                            .and_then(resource_exists::<Assets<AnimationGraph>>)
+                            .and_then(resource_exists::<Assets<AnimationGraphAsset>>),
+                    ),
+            )
+            .add_systems(
+                Update,
+                (write_clip_playheads, fire_clip_events)
+                    .chain()
+                    .in_set(AnimationSetSystems)
+                    .after(apply_animation_state)
+                    .after(graph::advance_animation_graphs)
+                    // Before a `then` writes the state it moves on to, so
+                    // the keys at the tail of the clip that ran out are still
+                    // read against that clip.
+                    .before(report_finished_states),
             );
     }
 }
@@ -201,6 +249,10 @@ pub fn register_animation_set_types(app: &mut App) {
 /// Builds the player, the graph and the bone target ids of every set whose
 /// skeleton and source files have arrived.
 ///
+/// An entity naming a graph file is left to the graph evaluator: the two would
+/// otherwise each claim the same skeleton's player. A graph reference naming
+/// no file yet is not one.
+///
 /// Retried each frame rather than run on insertion, because a glTF scene
 /// spawns asynchronously and its skeleton can be several frames behind the
 /// component naming it.
@@ -213,6 +265,7 @@ fn bind_animation_sets(
         (
             Entity,
             &AnimationSet,
+            Option<&AnimationGraphRef>,
             Option<&AnimationSources>,
             Option<&AnimationState>,
         ),
@@ -221,7 +274,10 @@ fn bind_animation_sets(
     children: Query<&Children>,
     names: Query<&Name>,
 ) {
-    for (entity, set, sources, state) in &unbound {
+    for (entity, set, graph_ref, sources, state) in &unbound {
+        if graph_ref.is_some_and(|graph_ref| !graph_ref.path.is_empty()) {
+            continue;
+        }
         let Some(sources) = sources else {
             commands.entity(entity).insert(AnimationSources(
                 set.sources
@@ -404,6 +460,135 @@ fn apply_animation_state(
     }
 }
 
+/// What an entity is playing, and where its playhead stands.
+#[derive(Clone, Copy)]
+struct PlayingClip<'a> {
+    /// The file the clip came out of, as the set or graph names it.
+    source: &'a str,
+    /// The clip's name in that file.
+    clip: &'a str,
+    /// Seconds into the clip, as of the last tick.
+    seek: f32,
+    /// The way that tick moved through the clip.
+    pass: ClipPass,
+}
+
+impl<'a> PlayingClip<'a> {
+    /// Reads a clip's playhead and how it travelled off the animation playing
+    /// it; a finished run reads as past the end, not as a wrap.
+    fn read(source: &'a str, clip: &'a str, active: &ActiveAnimation) -> Self {
+        let wrapped = active.just_completed() && !active.is_finished();
+        Self {
+            source,
+            clip,
+            seek: active.seek_time(),
+            pass: match (active.is_playback_reversed(), wrapped) {
+                (false, false) => ClipPass::Forward,
+                (false, true) => ClipPass::ForwardWrapped,
+                (true, false) => ClipPass::Backward,
+                (true, true) => ClipPass::BackwardWrapped,
+            },
+        }
+    }
+}
+
+/// Writes each bound entity's playhead onto the clip entity that carries
+/// that clip's events; a graph beside a set drives the entity alone.
+fn write_clip_playheads(
+    mut commands: Commands,
+    sets: Query<
+        (Entity, &AnimationSet, &AnimationSetBound, &AnimationState),
+        Without<AnimationGraphBound>,
+    >,
+    graphs: Query<(Entity, &AnimationGraphBound, &graph::AnimationGraphPlayback)>,
+    players: Query<&AnimationPlayer>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    marked: Query<(), With<ClipEvent>>,
+    mut playheads: Query<&mut ClipPlayhead>,
+) {
+    for (owner, set, bound, state) in &sets {
+        let playing = resolve_state(set, &bound.nodes, &state.0).and_then(|(def, node)| {
+            let active = players.get(bound.player).ok()?.animation(node)?;
+            let source = set.sources.get(def.source).map_or("", String::as_str);
+            Some(PlayingClip::read(source, def.clip.as_str(), active))
+        });
+        write_playheads_under(
+            owner,
+            playing,
+            &mut commands,
+            &children,
+            &names,
+            &marked,
+            &mut playheads,
+        );
+    }
+    for (owner, bound, playback) in &graphs {
+        let playing = players.get(bound.player).ok().and_then(|player| {
+            let (source, clip, node) = bound.leading_clip_of(player, &playback.state)?;
+            Some(PlayingClip::read(source, clip, player.animation(node)?))
+        });
+        write_playheads_under(
+            owner,
+            playing,
+            &mut commands,
+            &children,
+            &names,
+            &marked,
+            &mut playheads,
+        );
+    }
+}
+
+/// Moves the playhead of the clip entity directly under `owner` that stands
+/// for the playing clip, seeds one that just started, and clears the rest.
+fn write_playheads_under(
+    owner: Entity,
+    playing: Option<PlayingClip<'_>>,
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+    marked: &Query<(), With<ClipEvent>>,
+    playheads: &mut Query<&mut ClipPlayhead>,
+) {
+    let Ok(kids) = children.get(owner) else {
+        return;
+    };
+    for row in kids.iter() {
+        let holds_events = children
+            .get(row)
+            .is_ok_and(|keys| keys.iter().any(|key| marked.contains(key)));
+        if !holds_events {
+            continue;
+        }
+        let name = names.get(row).map_or("", Name::as_str);
+        let played = playing.filter(|clip| stands_for_clip(name, clip.source, clip.clip));
+        match (playheads.get_mut(row), played) {
+            (Ok(mut playhead), Some(clip)) => playhead.advance_to(clip.seek, clip.pass),
+            (Ok(_), None) => {
+                commands.entity(row).remove::<ClipPlayhead>();
+            }
+            (Err(_), Some(clip)) => {
+                commands.entity(row).insert(ClipPlayhead {
+                    last: clip.seek,
+                    now: clip.seek,
+                    pass: ClipPass::Forward,
+                });
+            }
+            (Err(_), None) => {}
+        }
+    }
+}
+
+/// Whether a clip entity name stands for `clip` out of `source`: a bare
+/// clip name, or `<file>#<clip>` when the file matters.
+fn stands_for_clip(name: &str, source: &str, clip: &str) -> bool {
+    match name.split_once('#') {
+        Some((file, named)) => file == source && named == clip,
+        None => name == clip,
+    }
+}
+
 /// Reports a non-looping state that has run out, and moves on to whatever it
 /// said should follow.
 fn report_finished_states(
@@ -573,7 +758,7 @@ fn tag_from(
 }
 
 /// Every descendant of `root` carrying `wanted` as its name, nearest first.
-fn descendants_named(
+pub(crate) fn descendants_named(
     root: Entity,
     wanted: &str,
     children: &Query<&Children>,

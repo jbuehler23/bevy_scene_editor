@@ -16,6 +16,7 @@ bevy_reflect = { version = "0.19", features = ["smol_str"] }
 lalrpop-util = "0.23"
 nom = "8"
 pathdiff.workspace = true
+path-slash.workspace = true
 thiserror = "2"
 log = "0.4"
 # `bevy_feathers::theme::ThemeToken` wraps a `SmolStr`, which reflects as an

@@ -21,6 +21,7 @@ use bevy::render::render_resource::{
     TextureViewDescriptor, TextureViewDimension,
 };
 use bevy::shader::ShaderRef;
+use path_slash::PathExt as _;
 
 pub mod scatter;
 
@@ -120,7 +121,7 @@ pub fn resolve_with<'m>(
         handle
             .as_ref()
             .and_then(|handle| assets.get_path(handle.id()))
-            .map(|path| path.path().to_string_lossy().replace('\\', "/"))
+            .map(|path| path.path().to_slash_lossy().into_owned())
     };
 
     let mut resolved = ResolvedSlots::default();
