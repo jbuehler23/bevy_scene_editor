@@ -900,6 +900,10 @@ pub struct Terrain {
     pub quantization: TerrainQuantization,
     /// What this terrain's navigation mesh is baked for.
     pub navmesh: TerrainNavmesh,
+    /// The ground detail this terrain scatters, one entry per layer. Each grows
+    /// from the channel of [`Terrain::channels`] its `density_channel` names.
+    #[reflect(default)]
+    pub detail: Vec<DetailLayer>,
 }
 
 /// These values are a persisted contract: BSN elides a field equal to its
@@ -923,6 +927,7 @@ impl Default for Terrain {
             heights: Vec::new(),
             quantization: TerrainQuantization::default(),
             navmesh: TerrainNavmesh::default(),
+            detail: Vec::new(),
         }
     }
 }
@@ -931,6 +936,109 @@ impl Terrain {
     /// Cell count this terrain's per-cell arrays must have.
     pub fn cell_count(&self) -> usize {
         (self.resolution as usize) * (self.resolution as usize)
+    }
+}
+
+/// One layer of ground detail: what it draws, where it grows and how it moves.
+/// The `Default` is the grass look, and a persisted contract: BSN elides it.
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+pub struct DetailLayer {
+    /// What this layer is called in the editor.
+    pub name: String,
+    /// Name of the [`TerrainChannel`] holding per-cell density. A cell reading
+    /// zero grows nothing; the channel's ceiling is full density.
+    pub density_channel: String,
+    /// What one instance draws.
+    pub mesh: DetailMesh,
+    /// Shortest and tallest an instance stands, in world units. Each takes a
+    /// height between the two from the placement noise.
+    pub height: [f32; 2],
+    /// Narrowest and widest an instance is drawn, as a multiple of the mesh's
+    /// own width.
+    pub width: [f32; 2],
+    /// Linear colour at the foot of an instance.
+    pub color_base: [f32; 3],
+    /// Linear colour at the top of an instance.
+    pub color_tip: [f32; 3],
+    /// How fast the wind pattern travels across the terrain, in tiles per
+    /// second.
+    pub wind_speed: f32,
+    /// How far the wind leans a tip sideways, in world units.
+    pub wind_strength: f32,
+    /// How far the wind bobs a tip vertically, in world units. Weaker than
+    /// [`Self::wind_strength`].
+    pub wind_vertical_strength: f32,
+    /// Direction the wind pattern travels in, on the XZ plane.
+    pub wind_direction: [f32; 2],
+    /// World units one tile of the wind pattern spans.
+    pub wind_tile_size: f32,
+    /// How far a tip leans from its own facing, in world units, before any
+    /// wind. The foot stays where it is planted.
+    pub bend: f32,
+    /// How far a presser shoves a tip away from itself, in world units.
+    pub push_strength: f32,
+    /// How close a presser has to be to bend an instance at all, in world
+    /// units.
+    pub push_radius: f32,
+    /// Instances per square metre at full density.
+    pub density_per_m2: f32,
+    /// How far from the viewer this layer draws, in world units.
+    pub cull_distance: f32,
+    /// Whether an instance stands along the ground normal rather than
+    /// straight up.
+    pub align_to_normal: bool,
+}
+
+/// What one instance of a detail layer draws.
+#[derive(Reflect, Clone, Debug, PartialEq, Default)]
+#[reflect(Default)]
+pub enum DetailMesh {
+    /// The built-in blade card.
+    #[default]
+    Card,
+    /// A glTF below the assets directory, flattened into one mesh.
+    Asset(String),
+}
+
+impl Default for DetailLayer {
+    fn default() -> Self {
+        Self {
+            name: "grass".to_string(),
+            density_channel: "grass".to_string(),
+            mesh: DetailMesh::Card,
+            height: [0.35, 0.7],
+            width: [0.03, 0.05],
+            color_base: [0.05, 0.14, 0.04],
+            color_tip: [0.36, 0.56, 0.16],
+            wind_speed: 0.15,
+            wind_strength: 0.12,
+            wind_vertical_strength: 0.04,
+            wind_direction: [1.0, 0.35],
+            wind_tile_size: 12.0,
+            bend: 0.22,
+            push_strength: 0.8,
+            push_radius: 1.2,
+            density_per_m2: 24.0,
+            cull_distance: 45.0,
+            align_to_normal: false,
+        }
+    }
+}
+
+/// Something ground detail bends away from. Only the few nearest the viewer
+/// reach the shader each frame.
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component, Default, @crate::EditorCategory::new("Terrain"))]
+pub struct DetailPresser {
+    /// How wide this presser flattens detail, in world units. Multiplied into
+    /// each layer's own [`DetailLayer::push_radius`].
+    pub radius: f32,
+}
+
+impl Default for DetailPresser {
+    fn default() -> Self {
+        Self { radius: 0.5 }
     }
 }
 

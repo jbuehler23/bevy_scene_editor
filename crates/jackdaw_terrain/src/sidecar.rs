@@ -3112,6 +3112,37 @@ mod tests {
         }
     }
 
+    /// A detail layer's density is an ordinary channel, so it travels in the
+    /// file the same way every other painted layer does and needs no format
+    /// of its own.
+    #[test]
+    fn a_detail_density_channel_survives_a_save_and_load() {
+        let mut regions = TerrainRegions::new(RegionSize::new(8).unwrap());
+        for z in 0..8 {
+            for x in 0..8 {
+                regions.set_height(x, z, 0.0);
+            }
+        }
+        regions.set_channel_count(2);
+        regions.set_channel(1, 2, 3, 200);
+        regions.set_channel(1, 5, 6, 41);
+        let data = RegionTerrainData {
+            channels: vec![
+                ChannelDescriptor::new("biome", ChannelElement::U8),
+                ChannelDescriptor::new("grass", ChannelElement::U8),
+            ],
+            regions,
+            ..RegionTerrainData::default()
+        };
+
+        let back = load(&save(&data).expect("encodes")).expect("decodes");
+        assert_eq!(back.channels, data.channels);
+        assert_eq!(back.regions.channel_at(1, 2, 3), 200);
+        assert_eq!(back.regions.channel_at(1, 5, 6), 41);
+        assert_eq!(back.regions.channel_at(1, 0, 0), 0);
+        assert_eq!(back, data);
+    }
+
     #[test]
     fn grid_geometry_round_trips_through_a_version_5_file() {
         let mut data = bare_document();

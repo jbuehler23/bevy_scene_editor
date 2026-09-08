@@ -30,10 +30,11 @@ pub use brush_chunks::{MeshChunk, build_brush_chunks};
 pub use mesh_rebuild::evaluate_brush_geometry;
 pub use node_id::{SCENE_NODE_ID_TYPE_PATH, SPARSE_MIN, SceneNodeId};
 pub use types::{
-    Brush, BrushFaceData, BrushPlane, BrushTopology, CustomProperties, DerivedFaceMesh, GltfSource,
-    NAVMESH_EXCLUDE_TYPE_PATH, NavmeshExclude, PrefabBaseline, PropertyValue, ScatterGroup,
-    ScatterInstance, SceneRootTag, Terrain, TerrainChannel, TerrainChannelElement, TerrainNavmesh,
-    TerrainPaletteEntry, TerrainQuantization,
+    Brush, BrushFaceData, BrushPlane, BrushTopology, CustomProperties, DerivedFaceMesh,
+    DetailLayer, DetailMesh, DetailPresser, GltfSource, NAVMESH_EXCLUDE_TYPE_PATH, NavmeshExclude,
+    PrefabBaseline, PropertyValue, ScatterGroup, ScatterInstance, SceneRootTag, Terrain,
+    TerrainChannel, TerrainChannelElement, TerrainNavmesh, TerrainPaletteEntry,
+    TerrainQuantization,
 };
 
 use bevy::prelude::*;
@@ -82,6 +83,9 @@ impl Plugin for SceneTypesPlugin {
             .register_type::<TerrainChannel>()
             .register_type::<TerrainChannelElement>()
             .register_type::<TerrainNavmesh>()
+            .register_type::<DetailLayer>()
+            .register_type::<DetailMesh>()
+            .register_type::<DetailPresser>()
             .register_type::<NavmeshExclude>()
             .register_type::<ScatterGroup>()
             .register_type::<ScatterInstance>()
