@@ -6,6 +6,7 @@
 #[path = "../util/mod.rs"]
 mod util;
 
+mod terrain_detail;
 mod terrain_export;
 mod terrain_reload;
 mod terrain_stamp;

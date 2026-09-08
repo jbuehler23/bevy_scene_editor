@@ -1,8 +1,10 @@
-//! The dockable "Terrain" panel: Textures, Scatter and Generation sections.
+//! The dockable "Terrain" panel: Textures, Scatter, Detail and Generation
+//! sections.
 //!
 //! Separate from the Components inspector so PCG and authoring parameters live
 //! with the feature they configure rather than the object they act on.
 
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{SliderValue, ValueChange};
@@ -14,12 +16,17 @@ use jackdaw_feathers::{
     number_input::ScrubNumberInputValue,
     panel_card::PanelCardCollapseState,
     tab_strip::{self, TabStripItem, TabStripOrientation},
+    text_edit::{TextEditCommitEvent, TextEditProps, text_edit},
     tokens,
+    tooltip::Tooltip,
 };
 
 use super::autoterrain_ops::{
     TerrainAutoterrainBaseOp, TerrainAutoterrainEnableOp, TerrainAutoterrainRangeOp,
     TerrainAutoterrainSlopeOp,
+};
+use super::detail_ops::{
+    TerrainDetailAddOp, TerrainDetailRemoveOp, TerrainDetailSelectOp, TerrainDetailSetOp,
 };
 use super::ops::{TerrainErodeOp, TerrainGenerateOp};
 use super::shape_ops::{MAX_CELL_SIZE, MIN_CELL_SIZE, clamp_cell_size, commit_shape};
@@ -64,7 +71,10 @@ pub(super) fn plugin(app: &mut App) {
         .add_observer(on_material_detile_change)
         .add_observer(on_autoterrain_slider_change)
         .add_observer(on_autoterrain_checkbox_change)
-        .add_observer(on_ground_slider_change);
+        .add_observer(on_ground_slider_change)
+        .add_observer(on_detail_slider_change)
+        .add_observer(on_detail_checkbox_change)
+        .add_observer(on_detail_text_commit);
 }
 
 pub(crate) fn add_to_extension(ctx: &mut ExtensionContext) {
@@ -79,12 +89,13 @@ pub(crate) fn add_to_extension(ctx: &mut ExtensionContext) {
 #[operator(
     id = "terrain.panel.tab",
     label = "Terrain Panel Tab",
-    description = "Switch the Terrain panel between its Textures, Scatter and Generation \
-                   sections.",
+    description = "Switch the Terrain panel between its Textures, Scatter, Detail and \
+                   Generation sections.",
     params(tab(
         String,
         default = "scatter",
-        doc = "Which section to show: \"textures\", \"scatter\" or \"generation\"."
+        doc = "Which section to show: \"textures\", \"scatter\", \"detail\" or \
+               \"generation\"."
     ),),
     allows_undo = false
 )]
@@ -96,6 +107,7 @@ pub(crate) fn terrain_panel_tab(
     *tab = match tab_str {
         "textures" => TerrainPanelTab::Textures,
         "generation" => TerrainPanelTab::Generation,
+        "detail" => TerrainPanelTab::Detail,
         "scatter" => TerrainPanelTab::Scatter,
         other => {
             warn!("terrain.panel.tab: unrecognized tab \"{other}\", falling back to \"scatter\"");
@@ -118,6 +130,7 @@ enum TerrainPanelTab {
     Textures,
     #[default]
     Scatter,
+    Detail,
     Generation,
 }
 
@@ -209,6 +222,9 @@ struct PanelState {
     tab: TerrainPanelTab,
     scatter_signature: Option<super::scatter::ScatterSignature>,
     textures_signature: Option<TexturesSignature>,
+    /// The layer list, and which of them the Detail tab is showing. The dials
+    /// dragged on the selected layer are left out, as the tiling values are.
+    detail_signature: Option<DetailSignature>,
     /// The selected terrain's vertex grid. In the signature because it changes
     /// only through the Shape section's combobox, a discrete pick. The extent
     /// beside it is absent, arriving from a scrub drag that a rebuild would
@@ -322,11 +338,17 @@ fn update_terrain_panel_content(
         .flatten()
         .map(|terrain| textures_signature(&terrain.data_path, &textures));
 
+    let detail_signature = (*tab == TerrainPanelTab::Detail)
+        .then(|| terrain_entity.and_then(|e| terrain_data.get(e).ok()))
+        .flatten()
+        .map(|terrain| detail_signature(terrain, textures.paint.detail_layer));
+
     let state = PanelState {
         terrain_entity,
         tab: *tab,
         scatter_signature,
         textures_signature,
+        detail_signature,
         resolution: terrain_entity
             .and_then(|e| terrain_data.get(e).ok())
             .map(|terrain| store.grid_shape(terrain).resolution),
@@ -351,6 +373,7 @@ fn update_terrain_panel_content(
             [
                 TabStripItem::new("Textures", *tab == TerrainPanelTab::Textures, "textures"),
                 TabStripItem::new("Scatter", *tab == TerrainPanelTab::Scatter, "scatter"),
+                TabStripItem::new("Detail", *tab == TerrainPanelTab::Detail, "detail"),
                 TabStripItem::new(
                     "Generation",
                     *tab == TerrainPanelTab::Generation,
@@ -402,6 +425,16 @@ fn update_terrain_panel_content(
                         view,
                     );
                 }
+            }
+            TerrainPanelTab::Detail => {
+                let terrain = terrain_data.get(terrain_entity_id).ok().cloned();
+                spawn_detail_sections(
+                    &mut commands,
+                    body,
+                    terrain.as_ref(),
+                    textures.paint.detail_layer,
+                    &textures,
+                );
             }
             TerrainPanelTab::Generation => {
                 spawn_generation_section(&mut commands, body, &gen_state);
@@ -698,6 +731,613 @@ fn spawn_ground_section(
         FieldKind::Continuous,
         GroundField::TintStrength,
     );
+}
+
+const DETAIL_SECTION: MaterialSection =
+    MaterialSection::new("Detail", Icon::Sprout, "terrain.detail.layers", false);
+const DETAIL_WIND_SECTION: MaterialSection =
+    MaterialSection::new("Wind", Icon::Wind, "terrain.detail.wind", false);
+const DETAIL_PUSH_SECTION: MaterialSection =
+    MaterialSection::new("Bend", Icon::Waves, "terrain.detail.push", true);
+
+/// What the Detail tab rebuilds for: the layer list, which one is selected,
+/// and the two of its fields that are not dragged.
+#[derive(PartialEq, Clone, Debug)]
+struct DetailSignature {
+    layers: Vec<String>,
+    selected: usize,
+    mesh: String,
+    align_to_normal: bool,
+}
+
+fn detail_signature(terrain: &jackdaw_scene_types::Terrain, selected: usize) -> DetailSignature {
+    let selected = super::detail::selected_detail_layer(terrain, selected).unwrap_or(0);
+    let layer = terrain.detail.get(selected);
+    DetailSignature {
+        layers: terrain
+            .detail
+            .iter()
+            .map(|layer| layer.name.clone())
+            .collect(),
+        selected,
+        mesh: layer.map(mesh_text).unwrap_or_default(),
+        align_to_normal: layer.is_some_and(|layer| layer.align_to_normal),
+    }
+}
+
+/// How a layer's mesh reads in the panel, and what `terrain.detail.set` takes
+/// back.
+fn mesh_text(layer: &jackdaw_scene_types::DetailLayer) -> String {
+    match &layer.mesh {
+        jackdaw_scene_types::DetailMesh::Card => "card".to_string(),
+        jackdaw_scene_types::DetailMesh::Asset(path) => path.clone(),
+    }
+}
+
+/// Which field of the selected layer a slider row drives. A pair field has a
+/// row per component, and one row writes the pair whole.
+#[derive(Component, Clone, Copy)]
+enum DetailField {
+    HeightMin,
+    HeightMax,
+    WidthMin,
+    WidthMax,
+    DensityPerM2,
+    CullDistance,
+    WindSpeed,
+    WindStrength,
+    WindVerticalStrength,
+    WindDirectionX,
+    WindDirectionZ,
+    WindTileSize,
+    Bend,
+    PushStrength,
+    PushRadius,
+}
+
+impl DetailField {
+    /// The field name `terrain.detail.set` knows this row by.
+    fn param(self) -> &'static str {
+        match self {
+            Self::HeightMin | Self::HeightMax => "height",
+            Self::WidthMin | Self::WidthMax => "width",
+            Self::DensityPerM2 => "density_per_m2",
+            Self::CullDistance => "cull_distance",
+            Self::WindSpeed => "wind_speed",
+            Self::WindStrength => "wind_strength",
+            Self::WindVerticalStrength => "wind_vertical_strength",
+            Self::WindDirectionX | Self::WindDirectionZ => "wind_direction",
+            Self::WindTileSize => "wind_tile_size",
+            Self::Bend => "bend",
+            Self::PushStrength => "push_strength",
+            Self::PushRadius => "push_radius",
+        }
+    }
+
+    /// What this row sends, given the value it was dragged to and the layer it
+    /// is editing: a pair row keeps the component it does not drive.
+    fn value(self, dragged: f32, layer: &jackdaw_scene_types::DetailLayer) -> String {
+        match self {
+            Self::HeightMin => format!("{dragged},{}", layer.height[1]),
+            Self::HeightMax => format!("{},{dragged}", layer.height[0]),
+            Self::WidthMin => format!("{dragged},{}", layer.width[1]),
+            Self::WidthMax => format!("{},{dragged}", layer.width[0]),
+            Self::WindDirectionX => format!("{dragged},{}", layer.wind_direction[1]),
+            Self::WindDirectionZ => format!("{},{dragged}", layer.wind_direction[0]),
+            _ => dragged.to_string(),
+        }
+    }
+}
+
+/// Which text field of the selected layer a `text_edit` commits into.
+#[derive(Component, Clone, Copy)]
+struct DetailTextField(&'static str);
+
+/// Tags the Detail section's align checkbox so its commit handler can tell it
+/// from every other checkbox in the editor.
+#[derive(Component)]
+struct DetailAlignCheckbox;
+
+/// The Detail tab: the layers this terrain scatters, and what the selected one
+/// draws. Where a layer grows is painted with the paint tool's Detail brush.
+fn spawn_detail_sections(
+    commands: &mut Commands,
+    parent: Entity,
+    terrain: Option<&jackdaw_scene_types::Terrain>,
+    selected: usize,
+    refs: &TexturesTabRefs,
+) {
+    let icon_font = refs.icon_font.0.clone();
+    let section = spawn_section(commands, parent, DETAIL_SECTION, &icon_font, &refs.collapse);
+    let layers = terrain
+        .map(|terrain| terrain.detail.as_slice())
+        .unwrap_or(&[]);
+    let selected = selected.min(layers.len().saturating_sub(1));
+    spawn_action_header(
+        commands,
+        section.body,
+        ActionHeaderProps {
+            name: format!("Layers ({})", layers.len()),
+            saved: true,
+            italic_font: &refs.italic_font.0,
+            icon_font: &icon_font,
+            actions: layer_actions(selected),
+        },
+    );
+    for (index, layer) in layers.iter().enumerate() {
+        spawn_detail_layer_row(commands, section.body, index, layer, index == selected);
+    }
+
+    let Some(layer) = layers.get(selected) else {
+        spawn_hint(
+            commands,
+            section.body,
+            "Add a layer to scatter grass, flowers or pebbles over this terrain. \
+             Each layer grows from a density channel painted with the paint tool's \
+             Detail brush.",
+        );
+        return;
+    };
+    spawn_hint(
+        commands,
+        section.body,
+        &format!(
+            "Grown from the {:?} channel. Paint it with the paint tool's Detail brush.",
+            layer.density_channel
+        ),
+    );
+    spawn_detail_text_row(
+        commands,
+        section.body,
+        "Name",
+        &layer.name,
+        DetailTextField("name"),
+    );
+    spawn_detail_text_row(
+        commands,
+        section.body,
+        "Mesh",
+        &mesh_text(layer),
+        DetailTextField("mesh"),
+    );
+    spawn_hint(
+        commands,
+        section.body,
+        "\"card\" is the built-in blade; anything else is a model below the assets \
+         directory.",
+    );
+    spawn_checkbox(
+        commands,
+        section.body,
+        "Align to ground",
+        layer.align_to_normal,
+        DetailAlignCheckbox,
+    );
+
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Shortest",
+        "How tall the shortest instance on this layer stands, in metres",
+        layer.height[0],
+        0.02..3.0,
+        DetailField::HeightMin,
+    );
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Tallest",
+        "How tall the tallest stands. Each instance takes a height between the two \
+         from the placement noise",
+        layer.height[1],
+        0.02..3.0,
+        DetailField::HeightMax,
+    );
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Narrowest",
+        "How wide the narrowest instance is drawn, over the mesh's own width",
+        layer.width[0],
+        0.005..2.0,
+        DetailField::WidthMin,
+    );
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Widest",
+        "How wide the widest is drawn, over the mesh's own width",
+        layer.width[1],
+        0.005..2.0,
+        DetailField::WidthMax,
+    );
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Per m2",
+        "How many instances a cell at full density grows per square metre",
+        layer.density_per_m2,
+        1.0..120.0,
+        DetailField::DensityPerM2,
+    );
+    spawn_detail_row(
+        commands,
+        section.body,
+        "Cull distance",
+        "How far from the camera this layer draws, in metres",
+        layer.cull_distance,
+        5.0..200.0,
+        DetailField::CullDistance,
+    );
+    spawn_detail_color(
+        commands,
+        section.body,
+        "Base colour",
+        "The colour at the foot of an instance, where the field reads as shadow",
+        layer.color_base,
+        "color_base",
+    );
+    spawn_detail_color(
+        commands,
+        section.body,
+        "Tip colour",
+        "The colour at the top of an instance, which is most of what the field reads as",
+        layer.color_tip,
+        "color_tip",
+    );
+
+    let wind = spawn_section(
+        commands,
+        parent,
+        DETAIL_WIND_SECTION,
+        &icon_font,
+        &refs.collapse,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Speed",
+        "How fast the wind pattern travels across the terrain, in tiles per second",
+        layer.wind_speed,
+        0.0..2.0,
+        DetailField::WindSpeed,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Strength",
+        "How far the wind leans a tip sideways, in metres",
+        layer.wind_strength,
+        0.0..1.0,
+        DetailField::WindStrength,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Vertical strength",
+        "How far the wind bobs a tip up and down, in metres",
+        layer.wind_vertical_strength,
+        0.0..0.5,
+        DetailField::WindVerticalStrength,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Direction X",
+        "Which way the wind pattern travels, along X",
+        layer.wind_direction[0],
+        -1.0..1.0,
+        DetailField::WindDirectionX,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Direction Z",
+        "Which way the wind pattern travels, along Z",
+        layer.wind_direction[1],
+        -1.0..1.0,
+        DetailField::WindDirectionZ,
+    );
+    spawn_detail_row(
+        commands,
+        wind.body,
+        "Tile size",
+        "How many metres one tile of the wind pattern spans: large is a slow swell \
+         across the field, small a busy ripple",
+        layer.wind_tile_size,
+        1.0..60.0,
+        DetailField::WindTileSize,
+    );
+
+    let push = spawn_section(
+        commands,
+        parent,
+        DETAIL_PUSH_SECTION,
+        &icon_font,
+        &refs.collapse,
+    );
+    spawn_detail_row(
+        commands,
+        push.body,
+        "Bend",
+        "How far a tip leans from its own facing before any wind, in metres",
+        layer.bend,
+        0.0..1.0,
+        DetailField::Bend,
+    );
+    spawn_detail_row(
+        commands,
+        push.body,
+        "Push strength",
+        "How far something walking through the field shoves a tip away, in metres",
+        layer.push_strength,
+        0.0..3.0,
+        DetailField::PushStrength,
+    );
+    spawn_detail_row(
+        commands,
+        push.body,
+        "Push radius",
+        "How close it has to be to bend an instance at all, in metres",
+        layer.push_radius,
+        0.1..5.0,
+        DetailField::PushRadius,
+    );
+}
+
+/// Add a layer, and remove the one that is selected.
+fn layer_actions(selected: usize) -> Vec<HeaderAction> {
+    vec![
+        HeaderAction::new(
+            Icon::Plus,
+            "Add Layer",
+            "Add a detail layer, and the density channel it grows from.",
+            ButtonOperatorCall::new(TerrainDetailAddOp::ID),
+        ),
+        HeaderAction::new(
+            Icon::Trash2,
+            "Remove Layer",
+            "Remove the selected layer. What was painted into its density channel stays.",
+            ButtonOperatorCall::new(TerrainDetailRemoveOp::ID)
+                .with_param("layer", selected.to_string()),
+        ),
+    ]
+}
+
+/// One row of the layer list: a swatch of its tip colour, its name, and a
+/// click that selects it.
+fn spawn_detail_layer_row(
+    commands: &mut Commands,
+    parent: Entity,
+    index: usize,
+    layer: &jackdaw_scene_types::DetailLayer,
+    selected: bool,
+) {
+    let [r, g, b] = layer.color_tip;
+    let row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(tokens::SPACING_SM),
+                width: Val::Percent(100.0),
+                padding: UiRect::all(px(tokens::SPACING_XS)),
+                ..default()
+            },
+            BackgroundColor(if selected {
+                tokens::ACCENT_BLUE
+            } else {
+                Color::NONE
+            }),
+            ChildOf(parent),
+        ))
+        .id();
+    commands.spawn((
+        Node {
+            width: px(tokens::SPACING_MD),
+            height: px(tokens::SPACING_MD),
+            ..default()
+        },
+        BackgroundColor(Color::linear_rgb(r, g, b)),
+        ChildOf(row),
+    ));
+    commands.spawn((
+        Text::new(layer.name.clone()),
+        TextFont {
+            font_size: tokens::TEXT_SIZE_SM,
+            ..default()
+        },
+        TextColor(if selected {
+            tokens::TEXT_BODY_COLOR.into()
+        } else {
+            tokens::TEXT_SECONDARY
+        }),
+        ChildOf(row),
+    ));
+    commands
+        .entity(row)
+        .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
+            commands
+                .operator(TerrainDetailSelectOp::ID)
+                .param("layer", index.to_string())
+                .settings(CallOperatorSettings {
+                    creates_history_entry: false,
+                    execution_context: ExecutionContext::Invoke,
+                })
+                .call();
+        });
+}
+
+fn spawn_detail_row(
+    commands: &mut Commands,
+    parent: Entity,
+    label: &str,
+    tooltip: &str,
+    value: f32,
+    range: std::ops::Range<f32>,
+    field: DetailField,
+) {
+    spawn_slider_row(
+        commands,
+        parent,
+        label,
+        tooltip,
+        value,
+        range,
+        FieldKind::Continuous,
+        field,
+    );
+}
+
+/// One text field of the selected layer, beside its name.
+fn spawn_detail_text_row(
+    commands: &mut Commands,
+    parent: Entity,
+    label: &str,
+    value: &str,
+    field: DetailTextField,
+) {
+    let row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(tokens::SPACING_SM),
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            ChildOf(parent),
+        ))
+        .id();
+    spawn_hint(commands, row, label);
+    commands.spawn((
+        text_edit(TextEditProps::default().with_default_value(value.to_string())),
+        field,
+        ChildOf(row),
+    ));
+}
+
+/// One colour of the selected layer, as a picker beside its name. The field it
+/// writes is named here rather than tagged on the entity.
+fn spawn_detail_color(
+    commands: &mut Commands,
+    parent: Entity,
+    label: &str,
+    tooltip: &str,
+    color: [f32; 3],
+    field: &'static str,
+) {
+    let row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(tokens::SPACING_SM),
+                ..default()
+            },
+            ChildOf(parent),
+        ))
+        .id();
+    spawn_hint(commands, row, label);
+    commands
+        .spawn((
+            jackdaw_feathers::color_picker::color_picker(
+                jackdaw_feathers::color_picker::ColorPickerProps::new()
+                    .with_color([color[0], color[1], color[2], 1.0]),
+            ),
+            Tooltip::title(label.to_string()).with_description(tooltip.to_string()),
+            Hovered::default(),
+            ChildOf(row),
+        ))
+        .observe(
+            move |event: On<jackdaw_feathers::color_picker::ColorPickerChangeEvent>,
+                  mut commands: Commands| {
+                let [r, g, b, _] = event.color;
+                commands
+                    .operator(TerrainDetailSetOp::ID)
+                    .param("field", field)
+                    .param("value", format!("{r},{g},{b}"))
+                    .settings(CallOperatorSettings {
+                        creates_history_entry: false,
+                        execution_context: ExecutionContext::Invoke,
+                    })
+                    .call();
+            },
+        );
+}
+
+/// Commits a Detail row on every tick of a drag: the operator writes one field
+/// of the component, and the section does not rebuild for it.
+fn on_detail_slider_change(
+    event: On<ValueChange<f32>>,
+    fields: Query<&DetailField>,
+    terrains: Query<&jackdaw_scene_types::Terrain>,
+    selection: Res<Selection>,
+    paint: Res<TerrainPaintState>,
+    mut commands: Commands,
+) {
+    let Ok(&field) = fields.get(event.event_target()) else {
+        return;
+    };
+    let Some(layer) = selection
+        .primary()
+        .and_then(|entity| terrains.get(entity).ok())
+        .and_then(|terrain| {
+            let index = super::detail::selected_detail_layer(terrain, paint.detail_layer)?;
+            terrain.detail.get(index)
+        })
+    else {
+        return;
+    };
+    commands
+        .operator(TerrainDetailSetOp::ID)
+        .param("field", field.param())
+        .param("value", field.value(event.value, layer))
+        .settings(CallOperatorSettings {
+            creates_history_entry: false,
+            execution_context: ExecutionContext::Invoke,
+        })
+        .call();
+}
+
+fn on_detail_checkbox_change(
+    event: On<ValueChange<bool>>,
+    boxes: Query<(), With<DetailAlignCheckbox>>,
+    mut commands: Commands,
+) {
+    let target = event.event_target();
+    if !boxes.contains(target) {
+        return;
+    }
+    jackdaw_feathers::utils::set_marker_if_alive::<Checked>(&mut commands, target, event.value);
+    commands
+        .operator(TerrainDetailSetOp::ID)
+        .param("field", "align_to_normal")
+        .param("value", event.value.to_string())
+        .settings(CallOperatorSettings {
+            creates_history_entry: false,
+            execution_context: ExecutionContext::Invoke,
+        })
+        .call();
+}
+
+fn on_detail_text_commit(
+    event: On<TextEditCommitEvent>,
+    fields: Query<&DetailTextField>,
+    mut commands: Commands,
+) {
+    let Ok(field) = fields.get(event.entity) else {
+        return;
+    };
+    commands
+        .operator(TerrainDetailSetOp::ID)
+        .param("field", field.0)
+        .param("value", event.text.clone())
+        .settings(CallOperatorSettings {
+            creates_history_entry: false,
+            execution_context: ExecutionContext::Invoke,
+        })
+        .call();
 }
 
 /// Every material the registry knows, in the same tile grammar the

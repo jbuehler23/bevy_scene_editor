@@ -23,12 +23,20 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use path_slash::PathExt as _;
 
+pub mod detail;
 pub mod scatter;
 
+pub use detail::{
+    ATTRIBUTE_HEIGHT_FRACTION, BuiltDetailMesh, DETAIL_TILE_BUDGET, DETAIL_TILE_CELLS,
+    DetailAssets, DetailBindings, DetailDirty, DetailInstanceBuffer, DetailKey, DetailLayerSource,
+    DetailLooks, DetailMeshes, DetailPipeline, DetailPressers, DetailRenderPlugin, DetailSettings,
+    DetailSource, DetailSystems, DetailTile, MAX_DETAIL_PRESSERS, TerrainDetailSource, card_mesh,
+    detail_instance_layout, white_image, wind_noise_image,
+};
 pub use scatter::{
-    GROUND_COVER_CULL_DISTANCE, GROUND_COVER_HEIGHT, ScatterAssets, ScatterChunk, ScatterDirty,
-    ScatterPrimitive, ScatterRegion, ScatterRenderPlugin, ScatterRendered, ScatterSystems,
-    TerrainScatter,
+    GROUND_COVER_CULL_DISTANCE, GROUND_COVER_HEIGHT, ScatterAssetPlugin, ScatterAssets,
+    ScatterChunk, ScatterDirty, ScatterPrimitive, ScatterRegion, ScatterRenderPlugin,
+    ScatterRendered, ScatterSystems, TerrainScatter,
 };
 
 use crate::heightmap::Heightmap;

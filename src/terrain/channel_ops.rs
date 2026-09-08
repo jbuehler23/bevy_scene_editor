@@ -87,7 +87,7 @@ mod mint_channel_name_tests {
 
 /// Push the terrain's channel table back into the scene document and
 /// force a mesh rebuild, so a table edit is both saved and visible.
-fn commit_channels(world: &mut World, entity: Entity) {
+pub(super) fn commit_channels(world: &mut World, entity: Entity) {
     let Some(terrain) = world.get::<jackdaw_scene_types::Terrain>(entity) else {
         return;
     };
