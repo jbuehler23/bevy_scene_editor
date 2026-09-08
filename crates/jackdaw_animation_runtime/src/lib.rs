@@ -178,10 +178,8 @@ impl Plugin for AnimationRuntimePlugin {
     fn build(&self, app: &mut App) {
         register_animation_set_types(app);
         graph::register_animation_graph_types(app);
-        // The graph asset and its loader need an asset server to register
-        // against; without one this stays the set half alone, which is what an
-        // app that only authors documents wants.
-        if app.is_plugin_added::<AssetPlugin>() {
+        let graph_assets_can_be_loaded = app.is_plugin_added::<AssetPlugin>();
+        if graph_assets_can_be_loaded {
             app.init_asset::<AnimationGraphAsset>()
                 .init_asset_loader::<AnimationGraphLoader>();
         }
@@ -226,9 +224,6 @@ impl Plugin for AnimationRuntimePlugin {
                     .in_set(AnimationSetSystems)
                     .after(apply_animation_state)
                     .after(graph::advance_animation_graphs)
-                    // Before a `then` writes the state it moves on to, so
-                    // the keys at the tail of the clip that ran out are still
-                    // read against that clip.
                     .before(report_finished_states),
             );
     }
@@ -401,14 +396,7 @@ fn merge_part_skeletons(
             .map_or(entity, |&ChildOf(parent)| parent);
 
         for part in candidates {
-            // A part exported beside its skeleton keeps its meshes as the
-            // skeleton's siblings, so the part is its parent's whole subtree.
-            let part_root = child_of
-                .get(part)
-                .map(|&ChildOf(parent)| parent)
-                .ok()
-                .filter(|&parent| !descendants(parent, &children).contains(&primary))
-                .unwrap_or(part);
+            let part_root = part_subtree_root(part, primary, &child_of, &children);
             let part_meshes: Vec<Entity> = descendants(part_root, &children)
                 .into_iter()
                 .filter(|&mesh| skins.contains(mesh))
@@ -431,6 +419,22 @@ fn merge_part_skeletons(
             commands.entity(part).despawn();
         }
     }
+}
+
+/// The subtree holding a part's meshes: a part exported beside its skeleton
+/// keeps them as the skeleton's siblings, so its root is the part's parent.
+fn part_subtree_root(
+    part: Entity,
+    primary: Entity,
+    child_of: &Query<&ChildOf>,
+    children: &Query<&Children>,
+) -> Entity {
+    child_of
+        .get(part)
+        .map(|&ChildOf(parent)| parent)
+        .ok()
+        .filter(|&parent| !descendants(parent, children).contains(&primary))
+        .unwrap_or(part)
 }
 
 /// Plays the state an [`AnimationState`] was changed to.
@@ -492,9 +496,9 @@ impl<'a> PlayingClip<'a> {
     }
 }
 
-/// Writes each bound entity's playhead onto the clip entity that carries
-/// that clip's events; a graph beside a set drives the entity alone.
-fn write_clip_playheads(
+/// Writes each bound entity's playhead onto the clip entity that carries that
+/// clip's events; a graph beside a set drives the entity alone.
+pub fn write_clip_playheads(
     mut commands: Commands,
     sets: Query<
         (Entity, &AnimationSet, &AnimationSetBound, &AnimationState),
@@ -502,12 +506,16 @@ fn write_clip_playheads(
     >,
     graphs: Query<(Entity, &AnimationGraphBound, &graph::AnimationGraphPlayback)>,
     players: Query<&AnimationPlayer>,
+    installed: Query<&AnimationGraphHandle>,
     children: Query<&Children>,
     names: Query<&Name>,
     marked: Query<(), With<ClipEvent>>,
     mut playheads: Query<&mut ClipPlayhead>,
 ) {
     for (owner, set, bound, state) in &sets {
+        if !plays_its_own_graph(bound.player, &bound.graph, &installed) {
+            continue;
+        }
         let playing = resolve_state(set, &bound.nodes, &state.0).and_then(|(def, node)| {
             let active = players.get(bound.player).ok()?.animation(node)?;
             let source = set.sources.get(def.source).map_or("", String::as_str);
@@ -524,6 +532,9 @@ fn write_clip_playheads(
         );
     }
     for (owner, bound, playback) in &graphs {
+        if !plays_its_own_graph(bound.player, &bound.graph, &installed) {
+            continue;
+        }
         let playing = players.get(bound.player).ok().and_then(|player| {
             let (source, clip, node) = bound.leading_clip_of(player, &playback.state)?;
             Some(PlayingClip::read(source, clip, player.animation(node)?))
@@ -538,6 +549,18 @@ fn write_clip_playheads(
             &mut playheads,
         );
     }
+}
+
+/// Whether a player is still wearing the graph its binding built, rather than
+/// one an editor swapped in to preview a clip through it.
+fn plays_its_own_graph(
+    player: Entity,
+    graph: &Handle<AnimationGraph>,
+    installed: &Query<&AnimationGraphHandle>,
+) -> bool {
+    installed
+        .get(player)
+        .is_ok_and(|handle| handle.0.id() == graph.id())
 }
 
 /// Moves the playhead of the clip entity directly under `owner` that stands
@@ -582,7 +605,7 @@ fn write_playheads_under(
 
 /// Whether a clip entity name stands for `clip` out of `source`: a bare
 /// clip name, or `<file>#<clip>` when the file matters.
-fn stands_for_clip(name: &str, source: &str, clip: &str) -> bool {
+pub fn stands_for_clip(name: &str, source: &str, clip: &str) -> bool {
     match name.split_once('#') {
         Some((file, named)) => file == source && named == clip,
         None => name == clip,
@@ -614,12 +637,10 @@ fn report_finished_states(
         if transitions.get_main_animation() != Some(node) {
             continue;
         }
-        // `just_completed` holds for the one frame the clip ran out on, which
-        // is what keeps a state with no `then` from reporting forever.
-        let ran_out = player
+        let ran_out_this_frame = player
             .animation(node)
             .is_some_and(|active| active.just_completed() && active.is_finished());
-        if !ran_out {
+        if !ran_out_this_frame {
             continue;
         }
         finished.write(AnimationStateFinished {
@@ -650,12 +671,11 @@ fn play_state(
     player: &mut AnimationPlayer,
     transitions: &mut AnimationTransitions,
 ) {
-    // Asking again for the state already running would restart its fade.
-    if transitions.get_main_animation() == Some(node)
+    let already_running = transitions.get_main_animation() == Some(node)
         && player
             .animation(node)
-            .is_some_and(|active| !active.is_finished())
-    {
+            .is_some_and(|active| !active.is_finished());
+    if already_running {
         return;
     }
     let repeat = if def.looped {
