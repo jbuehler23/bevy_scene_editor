@@ -13,7 +13,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use jackdaw_animation::graph_owner::{LoanedPlayer, PlayerLoan, lend_player, return_player};
-use jackdaw_animation_runtime::{AnimationSet, AnimationSetBound, AnimationState};
+use jackdaw_animation_runtime::{AnimationSet, AnimationSetBound, AnimationState, ClipPlayhead};
 use jackdaw_api::prelude::*;
 
 use super::panel::AnimationPanelState;
@@ -47,6 +47,9 @@ const MANNEQUIN_PATIENCE_FRAMES: u32 = 600;
 #[derive(Debug)]
 struct Active {
     target: Entity,
+    /// The document entity the clip plays on, which is what an event added to
+    /// it hangs under. `None` when the clip is playing on a mannequin.
+    owner: Option<Entity>,
     mannequin: Option<Entity>,
     file: String,
     clip: String,
@@ -74,6 +77,11 @@ impl AnimationPreview {
     /// The entity whose player is borrowed.
     pub fn target(&self) -> Option<Entity> {
         self.active.as_ref().map(|active| active.target)
+    }
+
+    /// The document entity a clip event added now would hang under.
+    pub fn owner(&self) -> Option<Entity> {
+        self.active.as_ref().and_then(|active| active.owner)
     }
 
     /// Whether the clip is running rather than held on a frame.
@@ -120,8 +128,6 @@ pub(crate) fn animation_preview(
     mut panel: ResMut<AnimationPanelState>,
 ) -> OperatorResult {
     let Some(spec) = params.as_str("clip").filter(|spec| !spec.is_empty()) else {
-        // The transport's play button carries no clip: it means the one that
-        // is up, held on a frame by a pause.
         let Some(active) = preview.active.as_mut() else {
             return OperatorResult::Cancelled;
         };
@@ -133,8 +139,6 @@ pub(crate) fn animation_preview(
     panel.clip = Some(clip.to_string());
 
     let entity = params.as_entity("entity").or_else(|| selection.primary());
-    // Asking again for the clip already up resumes it rather than restarting,
-    // which is what the panel's play button means after a pause.
     if let Some(active) = preview.active.as_mut()
         && active.file == file
         && active.clip == clip
@@ -201,10 +205,29 @@ pub fn stop_preview(world: &mut World) {
         return;
     };
     return_player(world, active.target);
+    clear_clip_playheads_under(world, active.owner);
     if let Some(mannequin) = active.mannequin
         && let Ok(mannequin) = world.get_entity_mut(mannequin)
     {
         mannequin.despawn();
+    }
+}
+
+/// Take the playheads off a returned entity's clip-event rows, so whatever
+/// drives it next seeds them rather than reading a span nothing played.
+fn clear_clip_playheads_under(world: &mut World, owner: Option<Entity>) {
+    let Some(owner) = owner else {
+        return;
+    };
+    let rows: Vec<Entity> = world
+        .get::<Children>(owner)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|row| world.get::<ClipPlayhead>(*row).is_some())
+        .collect();
+    for row in rows {
+        world.entity_mut(row).remove::<ClipPlayhead>();
     }
 }
 
@@ -249,11 +272,10 @@ fn start_requested_preview(world: &mut World) {
     };
     let first_scene = gltf.scenes.first().cloned();
 
-    let Some(target) = resolve_target(world, &mut request, first_scene) else {
-        // Either a model is still spawning, or there is nothing to play on and
-        // `resolve_target` has already said so.
+    let Some(found) = resolve_target(world, &mut request, first_scene) else {
         return;
     };
+    let PreviewTarget { player, owner } = found;
 
     stop_preview(world);
 
@@ -262,12 +284,12 @@ fn start_requested_preview(world: &mut World) {
         .get(&clip_handle)
         .map_or(0.0, AnimationClip::duration);
     let repeat = super::library::looped_hint(&request.clip);
-    let tagged = jackdaw_animation_runtime::tag_animation_targets(world, target);
+    let tagged = jackdaw_animation_runtime::tag_animation_targets(world, player);
     let (graph, node) = AnimationGraph::from_clip(clip_handle);
     let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
     lend_player(
         world,
-        target,
+        player,
         PlayerLoan::new(graph, node)
             .at(0.0, true)
             .repeating(repeat)
@@ -277,7 +299,8 @@ fn start_requested_preview(world: &mut World) {
     let mut preview = world.resource_mut::<AnimationPreview>();
     preview.wanted = None;
     preview.active = Some(Active {
-        target,
+        target: player,
+        owner,
         mannequin: request.mannequin,
         file: request.file,
         clip: request.clip,
@@ -286,6 +309,13 @@ fn start_requested_preview(world: &mut World) {
         elapsed_secs: 0.0,
         playing: true,
     });
+}
+
+/// The player a preview drives, and the document entity it plays on.
+struct PreviewTarget {
+    player: Entity,
+    /// `None` for a mannequin, which no document entity owns.
+    owner: Option<Entity>,
 }
 
 /// The entity whose player the clip should drive.
@@ -302,12 +332,13 @@ fn resolve_target(
     world: &mut World,
     request: &mut Request,
     first_scene: Option<Handle<WorldAsset>>,
-) -> Option<Entity> {
+) -> Option<PreviewTarget> {
     if let Some(mannequin) = request.mannequin {
-        // The model spawns over a few frames; keep the request until its
-        // skeleton is there.
         if let Some(player) = player_descendant(world, mannequin) {
-            return Some(player);
+            return Some(PreviewTarget {
+                player,
+                owner: None,
+            });
         }
         request.waited += 1;
         if request.waited > MANNEQUIN_PATIENCE_FRAMES {
@@ -327,32 +358,40 @@ fn resolve_target(
         .filter(|&entity| world.entities().contains(entity))
     {
         let under = descendants(world, entity);
-        let mut names_a_skeleton = false;
+        let mut skeleton_is_built_elsewhere = false;
         for &candidate in &under {
             if let Some(bound) = world.get::<AnimationSetBound>(candidate) {
-                return Some(bound.player);
+                return Some(PreviewTarget {
+                    player: bound.player,
+                    owner: Some(candidate),
+                });
             }
             let Some(set) = world.get::<AnimationSet>(candidate) else {
                 continue;
             };
-            names_a_skeleton = true;
+            skeleton_is_built_elsewhere = true;
             let wanted = set.skeleton_root.clone();
             if let Some(root) = descendant_named(world, candidate, &wanted) {
-                return Some(root);
+                return Some(PreviewTarget {
+                    player: root,
+                    owner: Some(candidate),
+                });
             }
         }
         if let Some(player) = player_descendant(world, entity) {
-            return Some(player);
+            return Some(PreviewTarget {
+                player,
+                owner: Some(entity),
+            });
         }
-        // A set whose skeleton is nowhere under it is worn by something the
-        // game builds, not by anything in the open scene, so it has no bones
-        // here to drive.
-        if !names_a_skeleton && world.get::<Children>(entity).is_some() {
-            return Some(entity);
+        if !skeleton_is_built_elsewhere && world.get::<Children>(entity).is_some() {
+            return Some(PreviewTarget {
+                player: entity,
+                owner: Some(entity),
+            });
         }
     }
 
-    // Nothing selected wears a skeleton, so give the clip a body of its own.
     let Some(scene) = first_scene else {
         warn!(
             "animation.preview: nothing selected has a skeleton, and {} holds no scene to \
@@ -409,11 +448,20 @@ fn descendants(world: &World, root: Entity) -> Vec<Entity> {
     found
 }
 
-/// Keep the preview's transport in step with the player it borrowed.
-fn drive_preview_player(
+/// Keep the preview's transport in step with the player it borrowed, and the
+/// Timeline's playhead in step with both; a ruler seek reaches the player here.
+pub(super) fn drive_preview_player(
     mut preview: ResMut<AnimationPreview>,
+    selected: Res<jackdaw_animation::SelectedClip>,
+    mut cursor: ResMut<jackdaw_animation::TimelineCursor>,
+    mut seeks: MessageReader<jackdaw_animation::AnimationSeek>,
+    mut stops: MessageReader<jackdaw_animation::AnimationStop>,
     mut players: Query<&mut AnimationPlayer>,
 ) {
+    let showing_the_preview = selected.0.is_none();
+    let seeking = seeks.read().last().map(|seek| seek.0);
+    let rewound = stops.read().last().is_some();
+    let sought = if rewound { Some(0.0) } else { seeking };
     let Some(active) = preview.active.as_mut() else {
         return;
     };
@@ -430,7 +478,13 @@ fn drive_preview_player(
             animation.pause();
         }
     }
+    if let Some(time) = sought.filter(|_| showing_the_preview) {
+        animation.seek_to(time.max(0.0));
+    }
     active.elapsed_secs = animation.seek_time();
+    if showing_the_preview && cursor.seek_time != active.elapsed_secs {
+        cursor.seek_time = active.elapsed_secs;
+    }
 }
 
 /// Play a bound set's state again once the editor hands its player back.

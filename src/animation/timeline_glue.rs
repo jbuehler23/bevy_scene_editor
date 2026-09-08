@@ -381,6 +381,9 @@ pub(super) fn describe_previewed_clip(
     asset_server: Res<AssetServer>,
     clips: Res<Assets<AnimationClip>>,
     targets: Query<(&AnimationTargetId, &Name)>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    placed: Query<(), With<Transform>>,
 ) {
     let wanted = preview
         .clip()
@@ -393,8 +396,15 @@ pub(super) fn describe_previewed_clip(
         }
         return;
     };
+    let row = preview.owner().and_then(|owner| {
+        super::markers::clip_event_row(owner, &file, &name, &children, &names, &placed)
+    });
     let spec = format!("{file}#{name}");
     if view.clip.as_deref() == Some(spec.as_str()) {
+        if view.row != row {
+            view.row = row;
+            dirty.0 = true;
+        }
         return;
     }
 
@@ -407,10 +417,7 @@ pub(super) fn describe_previewed_clip(
         return;
     };
 
-    // A clip addresses its bones by a hash of the name path, so a name can be
-    // read back only where a skeleton wearing those ids is in the scene. Where
-    // it is not, the count is all there is to say.
-    let mut bones: Vec<String> = clip
+    let mut bones_a_skeleton_in_the_scene_can_name: Vec<String> = clip
         .curves()
         .keys()
         .filter_map(|wanted| {
@@ -420,15 +427,16 @@ pub(super) fn describe_previewed_clip(
                 .map(|(_, name)| name.as_str().to_string())
         })
         .collect();
-    bones.sort_unstable();
-    bones.dedup();
+    bones_a_skeleton_in_the_scene_can_name.sort_unstable();
+    bones_a_skeleton_in_the_scene_can_name.dedup();
 
     *view = ImportedClipView {
         clip: Some(spec),
         name,
         duration: clip.duration(),
-        bones,
+        bones: bones_a_skeleton_in_the_scene_can_name,
         curve_count: clip.curves().len(),
+        row,
     };
     dirty.0 = true;
 }
