@@ -102,6 +102,9 @@ pub struct AnimationGraphState {
     pub looped: bool,
     /// Playback rate, as a multiple of the clips' authored speed.
     pub speed: f32,
+    /// Where the state's node sits on the editor's canvas. The evaluator never
+    /// reads it, and a file that leaves it out is laid out when it is opened.
+    pub position: Vec2,
 }
 
 impl Default for AnimationGraphState {
@@ -111,6 +114,7 @@ impl Default for AnimationGraphState {
             motion: AnimationMotion::default(),
             looped: true,
             speed: 1.0,
+            position: Vec2::ZERO,
         }
     }
 }
@@ -547,6 +551,7 @@ impl AnimationSet {
                 }),
                 looped: def.looped,
                 speed: def.speed,
+                ..AnimationGraphState::default()
             })
             .collect();
         let transitions = self

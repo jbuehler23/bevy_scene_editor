@@ -53,8 +53,13 @@ const PROJECTION_SKIP_PREFIXES: &[&str] = &["bevy_camera::camera::", "bevy_camer
 /// Streamed but never saved: these must reach the preview even though the
 /// save filter rejects them. The rig activation marker is how the Live
 /// camera lock finds the game's active rig; dropping it here would silently
-/// misalign picking and overlays against the streamed frame.
-const PROJECTION_ALLOW_PATHS: &[&str] = &["jackdaw_camera_rig::ActiveCameraRig"];
+/// misalign picking and overlays against the streamed frame. The graph
+/// playback is what the Graph window lights its running state from while the
+/// game is the one playing.
+const PROJECTION_ALLOW_PATHS: &[&str] = &[
+    "jackdaw_camera_rig::ActiveCameraRig",
+    "jackdaw_animation_runtime::graph::AnimationGraphPlayback",
+];
 
 /// True when a streamed component must not be applied to a preview entity.
 fn projection_skips(type_path: &str) -> bool {
