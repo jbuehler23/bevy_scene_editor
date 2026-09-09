@@ -38,7 +38,7 @@ use jackdaw_geometry::is_convex_topology;
 use super::{
     ComponentDisplay, ComponentDisplayBody, ComponentDisplayTypePath, ComponentName,
     ComponentPicker, Inspector, InspectorDirty, InspectorGroupSection, InspectorSearch,
-    InspectorTarget, ReflectDisplayable, bindings_card, brush_display,
+    InspectorTarget, ReflectDisplayable, animation_graph_card, bindings_card, brush_display,
     category_strip::ActiveInspectorCategory, component_tooltip::ReflectedTypeTooltip,
     custom_props_display, material_display, modifier_display, node_card, reflect_fields,
 };
@@ -532,6 +532,22 @@ pub(crate) fn build_inspector_displays(
         // (`camera_preview`), above the reflected fields.
         if type_id == Some(TypeId::of::<Camera3d>()) {
             crate::camera_preview::spawn_camera_preview_strip(commands, body_entity);
+        }
+
+        // A graph reference leads with the graphs the project holds, and a set
+        // of clips with the way to a graph. Both are filled world-exclusive
+        // after the flush, then fall through to the reflected fields.
+        if type_id == Some(TypeId::of::<jackdaw_animation_runtime::AnimationGraphRef>()) {
+            let body = body_entity;
+            commands.queue(move |world: &mut World| {
+                animation_graph_card::fill_graph_reference_picker(world, source_entity, body);
+            });
+        }
+        if type_id == Some(TypeId::of::<jackdaw_animation_runtime::AnimationSet>()) {
+            let body = body_entity;
+            commands.queue(move |world: &mut World| {
+                animation_graph_card::fill_animation_set_actions(world, source_entity, body);
+            });
         }
 
         if let Some(type_id) = type_id

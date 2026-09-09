@@ -647,6 +647,7 @@ impl Plugin for ExtensionPlugin {
                 .register_extension::<builtin_extensions::AssetBrowserExtension>()
                 .register_extension::<builtin_extensions::GamePanelExtension>()
                 .register_extension::<builtin_extensions::TimelineExtension>()
+                .register_extension::<builtin_extensions::AnimationGraphExtension>()
                 .register_extension::<builtin_extensions::TerminalExtension>()
                 .register_extension::<build_panel::BuildPanelExtension>()
                 .register_extension::<builtin_extensions::InspectorExtension>()
