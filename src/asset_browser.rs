@@ -263,12 +263,28 @@ fn spawn_asset_drag_ghost(
         .id()
 }
 
+/// Context-menu action prefix for creating a definition of a registered kind;
+/// the kind follows it.
+const NEW_DEFINITION_ACTION: &str = "asset_browser.new.";
+
 fn on_asset_browser_context_action(
     event: On<jackdaw_widgets::context_menu::ContextMenuAction>,
     mut commands: Commands,
     state: Res<AssetBrowserState>,
     mut menu_state: ResMut<jackdaw_widgets::context_menu::ContextMenuState>,
 ) {
+    if let Some(kind) = event.action.strip_prefix(NEW_DEFINITION_ACTION) {
+        commands
+            .operator(crate::definition_assets::AssetNewOp::ID)
+            .param("type", kind.to_string())
+            .call();
+        if let Some(menu) = menu_state.menu_entity.take()
+            && let Ok(mut ec) = commands.get_entity(menu)
+        {
+            ec.despawn();
+        }
+        return;
+    }
     if event.action != "asset_browser.delete" {
         return;
     }
@@ -528,6 +544,7 @@ fn setup_initial_directory(
 fn refresh_browser_on_change(
     mut state: ResMut<AssetBrowserState>,
     mut commands: Commands,
+    definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
     icon_font: Res<IconFont>,
     asset_server: Res<AssetServer>,
     content_query: Query<(Entity, Option<&Children>), With<AssetBrowserContent>>,
@@ -805,7 +822,10 @@ fn refresh_browser_on_change(
                 file_name: entry.file_name.clone(),
             };
 
-            let icon_override = if entry.is_prefab {
+            let definition = definition_types.for_file(&entry.path);
+            let icon_override = if definition.is_some() {
+                Some(icons::Icon::FileBox)
+            } else if entry.is_prefab {
                 Some(icons::Icon::Package)
             } else {
                 None
@@ -843,6 +863,12 @@ fn refresh_browser_on_change(
             // that container before these flush, which would orphan every
             // row under a dead parent.
             jackdaw_feathers::utils::attach_or_despawn(&mut commands, content_entity, item_entity);
+
+            if let Some(definition) = definition {
+                commands
+                    .entity(item_entity)
+                    .insert((Hovered::default(), Tooltip::title(definition.label.clone())));
+            }
 
             // Apply selected highlight if this item is the selected file
             let is_selected =
@@ -894,6 +920,8 @@ fn refresh_browser_on_change(
                       mut commands: Commands,
                       mut state: ResMut<AssetBrowserState>,
                       windows: Query<&Window>,
+                      definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
+                      project: Option<Res<crate::project::ProjectRoot>>,
                       mut menu_state: ResMut<jackdaw_widgets::context_menu::ContextMenuState>| {
                     if click.event().button != PointerButton::Secondary {
                         return;
@@ -911,11 +939,30 @@ fn refresh_browser_on_change(
                     {
                         ec.despawn();
                     }
+                    let mut items: Vec<(String, String)> = Vec::new();
+                    if let Some(project) = project.as_deref() {
+                        for definition in definition_types.iter() {
+                            if definition.scanned
+                                && crate::definition_assets::definition_dir(project, definition)
+                                    == rmb_path
+                            {
+                                items.push((
+                                    format!("{NEW_DEFINITION_ACTION}{}", definition.kind),
+                                    format!("New {}", definition.label),
+                                ));
+                            }
+                        }
+                    }
+                    items.push(("asset_browser.delete".to_string(), "Delete".to_string()));
+                    let entries: Vec<(&str, &str)> = items
+                        .iter()
+                        .map(|(action, label)| (action.as_str(), label.as_str()))
+                        .collect();
                     let menu = jackdaw_feathers::context_menu::spawn_context_menu(
                         &mut commands,
                         cursor_pos,
                         None,
-                        &[("asset_browser.delete", "Delete")],
+                        &entries,
                     );
                     menu_state.menu_entity = Some(menu);
                 },
@@ -1160,12 +1207,21 @@ fn remove_incompatible_image_nodes(
 fn handle_file_double_click(
     event: On<FileItemDoubleClicked>,
     mut state: ResMut<AssetBrowserState>,
+    definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
     mut commands: Commands,
 ) {
     if event.is_directory {
         state.current_directory = PathBuf::from(&event.path);
         state.selected_file = None; // Clear selection when navigating
         state.needs_refresh = true;
+        return;
+    }
+
+    if definition_types.for_file(Path::new(&event.path)).is_some() {
+        commands
+            .operator(crate::definition_assets::AssetOpenOp::ID)
+            .param("path", event.path.clone())
+            .call();
         return;
     }
 

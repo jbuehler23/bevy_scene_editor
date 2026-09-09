@@ -1042,6 +1042,7 @@ pub fn assets_handler(
     if let Some(mut demand) = world.get_resource_mut::<crate::animation::LibraryDemand>() {
         demand.requested = true;
     }
+    let definition_types = world.get_resource::<jackdaw_api::prelude::DefinitionAssetTypes>();
     let library = world.get_resource::<crate::animation::AnimationLibrary>();
     let detailed: Vec<Value> = found
         .into_iter()
@@ -1050,7 +1051,10 @@ pub fn assets_handler(
                 .and_then(|library| library.file(&path))
                 .map(|file| file.clips.iter().map(|clip| clip.name.as_str()).collect())
                 .unwrap_or_default();
-            json!({ "path": path, "kind": asset_kind(&path), "clips": clips })
+            let kind = definition_types
+                .and_then(|types| types.for_file(Path::new(&path)))
+                .map_or_else(|| asset_kind(&path).to_string(), |known| known.kind.clone());
+            json!({ "path": path, "kind": kind, "clips": clips })
         })
         .collect();
     Ok(Some(json!({ "assets": detailed })))
@@ -1059,7 +1063,8 @@ pub fn assets_handler(
 /// What kind of thing an asset path names, from its extension.
 ///
 /// Coarse on purpose: a caller uses it to tell a model from a document, and
-/// asks the editor about anything finer.
+/// asks the editor about anything finer. A file belonging to a registered
+/// definition type reports that type's kind instead.
 fn asset_kind(path: &str) -> &'static str {
     let extension = path
         .rsplit_once('.')

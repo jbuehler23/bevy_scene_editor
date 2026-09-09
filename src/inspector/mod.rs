@@ -8,6 +8,7 @@ pub(crate) mod component_display;
 pub mod component_picker;
 pub(crate) mod component_tooltip;
 mod custom_props_display;
+mod definition_card;
 mod live_edit_dots;
 pub(crate) mod material_card_routing;
 mod material_display;
@@ -145,6 +146,7 @@ impl Plugin for InspectorPlugin {
                         node_card::refresh_node_enum_combos,
                         node_card::refresh_node_optional_numbers,
                         bindings_card::refresh_bindings_card_on_change,
+                        definition_card::keep_unsaved_marker_in_step,
                     ),
                     brush_display::update_brush_face_properties,
                     category_strip::resolve_active_on_rebuild,
