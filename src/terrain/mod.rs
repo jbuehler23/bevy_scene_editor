@@ -1,5 +1,7 @@
 pub mod autoterrain_ops;
 pub mod channel_ops;
+pub mod detail;
+pub mod detail_ops;
 pub mod export;
 pub mod inspector;
 pub mod mesh;
@@ -32,6 +34,8 @@ pub use palette::TerrainPalette;
 pub use regions::{RegionVisibility, TerrainRegionView};
 pub use store::TerrainDataStore;
 
+/// Terrain editing: sculpt, paint, scatter and detail, plus the projections
+/// the scatter and detail renderers rebuild from.
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
@@ -50,17 +54,18 @@ impl Plugin for TerrainPlugin {
                     sync_terrain_bounds,
                     prune_terrain_heightmaps,
                     scatter_data::sync_terrain_scatter,
+                    detail::sync_terrain_detail,
                 )
                     .chain()
-                    // The projection this writes is what the renderer
-                    // rebuilds from, so it is written before the rebuild
-                    // reads it rather than a frame behind it.
                     .before(jackdaw_terrain::render::ScatterSystems::Rebuild)
+                    .before(jackdaw_terrain::render::DetailSystems::Rebuild)
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_observer(scatter_data::hide_drawn_scatter)
+            .add_observer(detail::hide_drawn_detail)
             .add_plugins((
                 jackdaw_terrain::render::ScatterRenderPlugin,
+                jackdaw_terrain::render::DetailRenderPlugin,
                 mesh::plugin,
                 sculpt::plugin,
                 paint::plugin,

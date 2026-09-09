@@ -495,13 +495,14 @@ impl EditorCommand for SetTerrainMaterials {
 #[operator(
     id = "terrain.paint.target",
     label = "Paint Target",
-    description = "Switch the paint brush between scatter masks, textures and the colour layer.",
+    description = "Switch the paint brush between scatter masks, textures, the colour layer \
+                   and detail.",
     allows_undo = false,
     params(target(
         String,
         default = "channels",
         doc = "Which domain the brush paints: \"channels\" (scatter masks), \"textures\", \
-               or \"color\" (the macro tint)."
+               \"color\" (the macro tint), or \"detail\" (density)."
     ))
 )]
 pub(crate) fn terrain_paint_target(
@@ -512,6 +513,7 @@ pub(crate) fn terrain_paint_target(
     paint.domain = match target {
         "textures" => PaintDomain::Textures,
         "color" => PaintDomain::Color,
+        "detail" => PaintDomain::Detail,
         "channels" => PaintDomain::Channels,
         other => {
             warn!(

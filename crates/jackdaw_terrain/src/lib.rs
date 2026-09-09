@@ -2,6 +2,8 @@ pub mod brush;
 pub mod channel;
 pub mod clipmap;
 pub mod control;
+#[cfg(feature = "render")]
+pub mod detail;
 #[cfg(feature = "procgen")]
 pub mod erosion;
 #[cfg(feature = "procgen")]
@@ -21,13 +23,20 @@ pub mod texture_set;
 pub mod tint;
 
 pub use brush::{SculptTool, affected_chunks, affected_chunks_at, apply_brush, apply_brush_at};
-pub use channel::{ChannelData, ChannelDescriptor, ChannelElement, apply_channel_brush};
+pub use channel::{
+    ChannelData, ChannelDescriptor, ChannelElement, apply_channel_brush, apply_density_brush,
+};
 pub use clipmap::{
     ClipmapLevel, GridSquare, REBUILD_BUDGET, SurfaceMeshData, build_clipmap_indices,
     build_clipmap_mesh_data, clipmap_levels, flat_shaded, plan_rebuilds,
 };
 pub use control::{
     Control, MANUAL_BIT, MAX_BLEND, MAX_TEXTURE_ID, apply_control_brush, apply_restore_brush,
+};
+#[cfg(feature = "render")]
+pub use detail::{
+    DetailInstance, DetailLod, detail_lod_at, detail_tiles_around, place_detail,
+    tile_centre_distance,
 };
 #[cfg(feature = "procgen")]
 pub use erosion::{ErosionParams, hydraulic_erosion};

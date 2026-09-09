@@ -48,6 +48,11 @@ impl StatusNotice {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    /// Put a line about something the editor did in front of the user.
+    pub fn show(&mut self, text: impl Into<String>) {
+        self.set(text.into(), false);
+    }
 }
 
 /// Put a refusal in front of the user: the editor did not do what was asked.

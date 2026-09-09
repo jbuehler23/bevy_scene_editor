@@ -7,6 +7,7 @@
 use bevy_math::Vec2;
 
 use crate::brush::compute_falloff;
+use crate::tint::brush_weight;
 
 /// Storage width a channel's values are written with on disk.
 ///
@@ -171,6 +172,91 @@ pub fn apply_channel_brush(
     changed
 }
 
+/// Ease cells under a circular brush toward the channel's ceiling, or toward
+/// zero when `erase` is set; returns the number of cells changed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors apply_color_brush's flat parameter list"
+)]
+pub fn apply_density_brush(
+    values: &mut [u16],
+    resolution: u32,
+    element: ChannelElement,
+    center: Vec2,
+    radius: f32,
+    hardness: f32,
+    falloff: f32,
+    opacity: f32,
+    dt: f32,
+    erase: bool,
+) -> usize {
+    if resolution == 0
+        || !radius.is_finite()
+        || radius <= 0.0
+        || !opacity.is_finite()
+        || opacity <= 0.0
+        || !dt.is_finite()
+        || dt <= 0.0
+    {
+        return 0;
+    }
+    let target = if erase { 0 } else { element.max_value() };
+    let res = resolution as i32;
+
+    let min_x = ((center.x - radius).floor() as i32).clamp(0, res - 1);
+    let max_x = ((center.x + radius).ceil() as i32).clamp(0, res - 1);
+    let min_z = ((center.y - radius).floor() as i32).clamp(0, res - 1);
+    let max_z = ((center.y + radius).ceil() as i32).clamp(0, res - 1);
+
+    let mut changed = 0;
+    for gz in min_z..=max_z {
+        for gx in min_x..=max_x {
+            let dist = ((gx as f32 - center.x).powi(2) + (gz as f32 - center.y).powi(2)).sqrt();
+            let weight = brush_weight(dist, radius, falloff, hardness);
+            if weight <= 0.0 {
+                continue;
+            }
+            let idx = (gz * res + gx) as usize;
+            let Some(before) = values.get(idx).copied() else {
+                continue;
+            };
+            let before_within_ceiling = before.min(element.max_value());
+            let after = step_toward(
+                before_within_ceiling,
+                target,
+                (opacity * weight * dt).clamp(0.0, 1.0),
+            );
+            if after != values[idx] {
+                values[idx] = after;
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
+/// One cell eased `t` of the way from `from` to `to`, never passing it, and
+/// never standing still while `t` is positive.
+fn step_toward(from: u16, to: u16, t: f32) -> u16 {
+    if from == to || !t.is_finite() || t <= 0.0 {
+        return from;
+    }
+    let delta = (f32::from(to) - f32::from(from)) * t;
+    let step = if delta > 0.0 {
+        delta.max(1.0)
+    } else {
+        delta.min(-1.0)
+    };
+    let next = (f32::from(from) + step)
+        .round()
+        .clamp(0.0, f32::from(u16::MAX)) as u16;
+    if to > from {
+        next.min(to)
+    } else {
+        next.max(to)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +415,128 @@ mod tests {
         );
         assert!(narrow < wide, "narrow {narrow} should be under wide {wide}");
         assert!(narrow > 0);
+    }
+
+    #[test]
+    fn a_density_stamp_accumulates_toward_the_channel_ceiling() {
+        let mut values = vec![0u16; 100];
+        let mut last = 0;
+        for _ in 0..4 {
+            apply_density_brush(
+                &mut values,
+                10,
+                ChannelElement::U8,
+                Vec2::new(5.0, 5.0),
+                3.0,
+                0.5,
+                1.0,
+                2.0,
+                1.0 / 60.0,
+                false,
+            );
+            let now = values[5 * 10 + 5];
+            assert!(now > last, "density {now} should rise above {last}");
+            last = now;
+        }
+        for _ in 0..2000 {
+            apply_density_brush(
+                &mut values,
+                10,
+                ChannelElement::U8,
+                Vec2::new(5.0, 5.0),
+                3.0,
+                0.5,
+                1.0,
+                2.0,
+                1.0 / 60.0,
+                false,
+            );
+        }
+        assert_eq!(values[5 * 10 + 5], ChannelElement::U8.max_value());
+        assert_eq!(values[0], 0, "a cell outside the radius is untouched");
+    }
+
+    #[test]
+    fn erasing_density_takes_a_cell_back_to_nothing() {
+        let mut values = vec![200u16; 100];
+        apply_density_brush(
+            &mut values,
+            10,
+            ChannelElement::U8,
+            Vec2::new(5.0, 5.0),
+            3.0,
+            0.5,
+            1.0,
+            2.0,
+            1.0 / 60.0,
+            true,
+        );
+        assert!(values[5 * 10 + 5] < 200);
+        for _ in 0..2000 {
+            apply_density_brush(
+                &mut values,
+                10,
+                ChannelElement::U8,
+                Vec2::new(5.0, 5.0),
+                3.0,
+                0.5,
+                1.0,
+                2.0,
+                1.0 / 60.0,
+                true,
+            );
+        }
+        assert_eq!(values[5 * 10 + 5], 0);
+    }
+
+    #[test]
+    fn the_density_hardness_plateau_paints_flat() {
+        let mut values = vec![0u16; 1600];
+        apply_density_brush(
+            &mut values,
+            40,
+            ChannelElement::U16,
+            Vec2::new(20.0, 20.0),
+            10.0,
+            0.6,
+            1.0,
+            0.5,
+            1.0 / 60.0,
+            false,
+        );
+        let centre = values[20 * 40 + 20];
+        assert!(centre > 0);
+        let outermost_plateau_cell = 5;
+        for offset in 1..=outermost_plateau_cell {
+            assert_eq!(
+                values[20 * 40 + 20 + offset],
+                centre,
+                "cell {offset} inside the plateau matches the centre"
+            );
+        }
+        let beyond_the_plateau = outermost_plateau_cell + 4;
+        assert!(
+            values[20 * 40 + 20 + beyond_the_plateau] < centre,
+            "the ring beyond the plateau has not fallen off"
+        );
+    }
+
+    #[test]
+    fn a_density_brush_outside_the_terrain_changes_nothing() {
+        let mut values = vec![0u16; 25];
+        let changed = apply_density_brush(
+            &mut values,
+            5,
+            ChannelElement::U8,
+            Vec2::new(50.0, 50.0),
+            2.0,
+            0.5,
+            1.0,
+            1.0,
+            1.0 / 60.0,
+            false,
+        );
+        assert_eq!(changed, 0);
+        assert!(values.iter().all(|v| *v == 0));
     }
 }

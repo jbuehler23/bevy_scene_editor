@@ -5385,6 +5385,8 @@ version = "0.19.0"
 dependencies = [
  "bevy",
  "bevy_math",
+ "bytemuck",
+ "jackdaw_scene_types",
  "noise",
  "path-slash",
  "rand 0.10.2",

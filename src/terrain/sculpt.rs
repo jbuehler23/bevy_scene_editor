@@ -126,6 +126,17 @@ impl SetTerrainHeights {
         if let Some(mut dirty) = world.get_mut::<TerrainDirtyChunks>(self.entity) {
             dirty.rebuild_all = true;
         }
+        let rect = match &self.patch {
+            HeightPatch::Whole { .. } => {
+                let resolution = world
+                    .resource::<TerrainDataStore>()
+                    .grid_shape(&terrain)
+                    .resolution;
+                GridRect::whole(resolution)
+            }
+            HeightPatch::Rect { rect, .. } => *rect,
+        };
+        super::detail::mark_detail_dirty(world, self.entity, rect);
     }
 }
 
@@ -254,7 +265,11 @@ pub fn terrain_sculpt(
     edit_mode: Res<TerrainEditMode>,
     brush_settings: Res<TerrainBrushSettings>,
     mut sculpt_state: ResMut<TerrainSculptState>,
-    mut terrain_query: Query<(&jackdaw_scene_types::Terrain, &mut TerrainDirtyChunks)>,
+    mut terrain_query: Query<(
+        &jackdaw_scene_types::Terrain,
+        &mut TerrainDirtyChunks,
+        Option<&mut jackdaw_terrain::render::DetailDirty>,
+    )>,
     mut store: ResMut<TerrainDataStore>,
     mut history: ResMut<CommandHistory>,
     time: Res<Time>,
@@ -264,7 +279,7 @@ pub fn terrain_sculpt(
         return OperatorResult::Cancelled;
     };
     let target = sculpt_state.target?;
-    let (terrain, mut dirty) = terrain_query.get_mut(target)?;
+    let (terrain, mut dirty, mut detail_dirty) = terrain_query.get_mut(target)?;
     // The stroke lands on the cells the terrain holds, so the brush reaches
     // wherever ground has been allocated.
     let resolution = store.grid_shape(terrain).resolution;
@@ -328,6 +343,9 @@ pub fn terrain_sculpt(
                 Some(grown) => grown.union(rect),
                 None => rect,
             });
+            if let Some(detail_dirty) = detail_dirty.as_mut() {
+                detail_dirty.touch(rect);
+            }
         }
     }
     OperatorResult::Running
