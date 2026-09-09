@@ -14,6 +14,7 @@ mod animation_timeline;
 mod brush_ops;
 mod canvas_guides;
 mod canvas_snap;
+mod definition_assets;
 mod gltf_authoring;
 mod mesh_quick_menu;
 mod modeling_essentials;

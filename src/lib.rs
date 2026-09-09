@@ -29,6 +29,7 @@ pub mod component_json;
 pub mod creation_taxonomy;
 pub mod custom_properties;
 pub mod default_style;
+pub mod definition_assets;
 pub mod draw_brush;
 pub mod edit_mode_ops;
 pub mod entity_ops;
@@ -461,6 +462,7 @@ impl Plugin for EditorCorePlugin {
             remote::debug::RemoteDebugPlugin,
             camera_settings::plugin,
         ))
+        .add_plugins(definition_assets::plugin)
         .add_plugins(model_thumbnail::plugin)
         .add_plugins(boot_ops::plugin)
         .add_plugins(fps_overlay::plugin)

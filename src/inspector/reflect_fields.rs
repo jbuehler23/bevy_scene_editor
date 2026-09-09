@@ -2692,6 +2692,23 @@ pub(crate) fn on_checkbox_commit(
     });
 }
 
+/// The value a field row reads: the definition asset the entity is editing, or
+/// the component of that type on the entity.
+pub(crate) fn inspected_value<'w>(
+    world: &'w World,
+    entity_ref: bevy::ecs::world::EntityRef<'w>,
+    registration: &bevy::reflect::TypeRegistration,
+    registry: &bevy::reflect::TypeRegistry,
+) -> Option<&'w dyn Reflect> {
+    let type_path = registration.type_info().type_path();
+    if let Some(value) =
+        crate::definition_assets::definition_value(world, entity_ref.id(), type_path, registry)
+    {
+        return Some(value);
+    }
+    registration.data::<ReflectComponent>()?.reflect(entity_ref)
+}
+
 /// True when any component on `entity_ref` changed within the tick window
 /// `(last_run, this_run]`. Gates the reflection-based field/enum refresh on real
 /// data changes (undo, gizmos, operators, AST live-edit all mark the component
@@ -2790,10 +2807,7 @@ pub(crate) fn refresh_inspector_fields(
         let Some(registration) = registry.get_with_type_path(comp_type_path) else {
             continue;
         };
-        let Some(reflect_component) = registration.data::<ReflectComponent>() else {
-            continue;
-        };
-        let Some(reflected) = reflect_component.reflect(entity_ref) else {
+        let Some(reflected) = inspected_value(world, entity_ref, registration, &registry) else {
             continue;
         };
         let Ok(field) = reflected.reflect_path(field_path.as_str()) else {
@@ -2826,10 +2840,7 @@ pub(crate) fn refresh_inspector_fields(
         let Some(registration) = registry.get_with_type_path(comp_type_path) else {
             continue;
         };
-        let Some(reflect_component) = registration.data::<ReflectComponent>() else {
-            continue;
-        };
-        let Some(reflected) = reflect_component.reflect(entity_ref) else {
+        let Some(reflected) = inspected_value(world, entity_ref, registration, &registry) else {
             continue;
         };
         let Ok(field) = reflected.reflect_path(field_path.as_str()) else {
@@ -3633,9 +3644,9 @@ fn list_items_as_json(
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
     let registration = registry.get_with_type_path(type_path)?;
-    let reflect_component = registration.data::<ReflectComponent>()?;
-    let component = reflect_component.reflect(world.get_entity(source).ok()?)?;
-    let field = component.reflect_path(field_path).ok()?;
+    let entity_ref = world.get_entity(source).ok()?;
+    let value = inspected_value(world, entity_ref, registration, &registry)?;
+    let field = value.reflect_path(field_path).ok()?;
     let ReflectRef::List(list) = field.reflect_ref() else {
         return None;
     };
@@ -3659,9 +3670,9 @@ fn default_list_item(
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
     let registration = registry.get_with_type_path(type_path)?;
-    let reflect_component = registration.data::<ReflectComponent>()?;
-    let component = reflect_component.reflect(world.get_entity(source).ok()?)?;
-    let field = component.reflect_path(field_path).ok()?;
+    let entity_ref = world.get_entity(source).ok()?;
+    let value = inspected_value(world, entity_ref, registration, &registry)?;
+    let field = value.reflect_path(field_path).ok()?;
     let TypeInfo::List(info) = field.get_represented_type_info()? else {
         return None;
     };

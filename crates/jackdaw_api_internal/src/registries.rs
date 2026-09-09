@@ -1,7 +1,7 @@
 //! Panel-extension registry. Operators now live as entities (see
 //! [`crate::lifecycle::OperatorEntity`]) and keybinds go through BEI, so
 //! this file is much smaller than in v1; only the panel-extension mapping
-//! remains.
+//! remains, alongside the host registries an extension writes into.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -11,7 +11,9 @@ use jackdaw_panels::WindowRegistry;
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<WindowExtensionRegistry>()
         .init_resource::<WindowRegistry>()
-        .init_resource::<crate::widgets::WidgetRegistry>();
+        .init_resource::<crate::widgets::WidgetRegistry>()
+        .init_resource::<crate::definition_assets::DefinitionAssetTypes>()
+        .add_observer(crate::definition_assets::cleanup_definition_asset_on_remove);
 }
 
 #[derive(Resource, Default)]

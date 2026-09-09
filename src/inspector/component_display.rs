@@ -47,6 +47,17 @@ use crate::prefab::PrefabAstCache;
 use crate::type_metadata::{TypeChrome, TypeMetadata};
 use bevy::picking::hover::Hovered;
 
+/// What the inspector reads to place its target: the entity's parents, the
+/// prefab it instances, and whether it edits a definition asset rather than a
+/// scene entity. Bundled into one param so the systems that read it stay under
+/// the system param-count limit.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct InspectorLineage<'w, 's> {
+    pub(crate) child_of: Query<'w, 's, &'static bevy::ecs::hierarchy::ChildOf>,
+    pub(crate) is_a: Query<'w, 's, &'static crate::prefab::IsA>,
+    pub(crate) definitions: Query<'w, 's, (), With<crate::definition_assets::DefinitionAssetEdit>>,
+}
+
 /// The live scene-document resource bundled into one param so the systems
 /// that read it stay under the system param-count limit.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -73,8 +84,7 @@ pub(crate) fn sync_inspector_to_selection(
     materials: Res<Assets<StandardMaterial>>,
     asts: SceneAsts,
     prefab_cache: Res<PrefabAstCache>,
-    child_of_query: Query<&bevy::ecs::hierarchy::ChildOf>,
-    isa_query: Query<&crate::prefab::IsA>,
+    lineage: InspectorLineage,
     collapse_state: Res<super::InspectorCollapseState>,
     displays: Query<Entity, Or<(With<ComponentDisplay>, With<ComponentPicker>)>>,
 ) {
@@ -99,6 +109,7 @@ pub(crate) fn sync_inspector_to_selection(
         if let Some(primary) = desired
             && current.is_none()
             && entity_query.get(primary).is_err()
+            && !lineage.definitions.contains(primary)
         {
             continue;
         }
@@ -111,6 +122,17 @@ pub(crate) fn sync_inspector_to_selection(
         let Some(primary) = desired else {
             continue;
         };
+        if lineage.definitions.contains(primary) {
+            commands.queue(move |world: &mut World| {
+                super::definition_card::fill_definition_card(world, inspector, primary);
+            });
+            commands.entity(inspector).insert((
+                InspectorTarget(primary),
+                Monitor(primary),
+                NotifyAdded::<InspectorDirty>::default(),
+            ));
+            continue;
+        }
         let Ok((archetype, entity_ref)) = entity_query.get(primary) else {
             continue;
         };
@@ -121,8 +143,8 @@ pub(crate) fn sync_inspector_to_selection(
             &prefab_cache,
             source_entity,
             entity_ref,
-            &child_of_query,
-            &isa_query,
+            &lineage.child_of,
+            &lineage.is_a,
         );
 
         build_inspector_displays(
@@ -778,8 +800,7 @@ pub(crate) fn on_inspector_dirty(
     materials: Res<Assets<StandardMaterial>>,
     asts: SceneAsts,
     prefab_cache: Res<PrefabAstCache>,
-    child_of_query: Query<&bevy::ecs::hierarchy::ChildOf>,
-    isa_query: Query<&crate::prefab::IsA>,
+    lineage: InspectorLineage,
     collapse_state: Res<super::InspectorCollapseState>,
 ) {
     // Multi-instance: rebuild every Inspector tab in lockstep. Each
@@ -791,6 +812,15 @@ pub(crate) fn on_inspector_dirty(
         let mut source_entity = target.0;
 
         despawn_inspector_display_children(&mut commands, children, &displays);
+
+        if lineage.definitions.contains(source_entity) {
+            let source = source_entity;
+            commands.queue(move |world: &mut World| {
+                super::definition_card::fill_definition_card(world, inspector_entity, source);
+            });
+            clear_dirty_for = clear_dirty_for.or(Some(source_entity));
+            continue;
+        }
 
         // Rebuild this inspector's contents. If the monitored target is gone
         // (despawned/respawned by CSG, undo, or prefab install), fall back to
@@ -824,8 +854,8 @@ pub(crate) fn on_inspector_dirty(
             &prefab_cache,
             source_entity,
             entity_ref,
-            &child_of_query,
-            &isa_query,
+            &lineage.child_of,
+            &lineage.is_a,
         );
 
         build_inspector_displays(
