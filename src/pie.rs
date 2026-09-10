@@ -226,6 +226,7 @@ impl Plugin for PiePlugin {
             .init_resource::<PieWindowMode>()
             .init_resource::<PiePrebuildState>()
             .init_resource::<crate::project_types::ProjectTypes>()
+            .init_resource::<crate::project_definitions::ProjectDefinitionKinds>()
             .init_resource::<ProjectSchemaWatch>()
             .init_resource::<EditorBuildSettings>()
             // PIE is an editor-only subsystem; gate it to the editor state so it
@@ -1422,6 +1423,7 @@ pub fn refresh_project_types(world: &mut World) -> Option<usize> {
         project_types.components().count()
     };
     crate::project_types::publish_document_only_types(world);
+    crate::project_definitions::register_project_definitions(world);
     if let Some(mut watch) = world.get_resource_mut::<ProjectSchemaWatch>() {
         watch.last_mtime = Some(mtime);
     }

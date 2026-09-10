@@ -266,7 +266,9 @@ pub(crate) fn entity_set_transform(
         ),
         value(
             String,
-            doc = "New value as JSON: 12, true, \"text\", or {\"Px\": 12}."
+            doc = "New value as JSON: 12, true, \"text\", or {\"Px\": 12}. A field \
+                   holding an asset takes its path, and a colour takes 'r,g,b', a \
+                   hex code or a name."
         ),
     )
 )]

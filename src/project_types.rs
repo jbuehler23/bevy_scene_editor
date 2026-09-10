@@ -29,6 +29,7 @@ pub struct ProjectTypes {
     components: HashMap<String, TypeSchema>,
     resources: HashMap<String, TypeSchema>,
     events: HashMap<String, TypeSchema>,
+    assets: HashMap<String, TypeSchema>,
     functions: Vec<FunctionSchema>,
 }
 
@@ -74,9 +75,30 @@ impl ProjectTypes {
         self.functions.iter()
     }
 
-    /// Whether any project component or resource types are known yet.
+    /// The shape of an asset type the project reported, or of a type one of
+    /// their fields reaches.
+    pub fn asset(&self, type_path: &str) -> Option<&TypeSchema> {
+        self.assets.get(type_path)
+    }
+
+    /// Every type the game registers as a reflected asset, which is what the
+    /// editor offers as a kind. The types their fields reach are described
+    /// beside them and are not kinds of their own.
+    pub fn assets(&self) -> impl Iterator<Item = &TypeSchema> {
+        self.assets.values().filter(|schema| schema.asset)
+    }
+
+    /// The schema for any type the project reported, asset types first so a
+    /// type in both buckets is described by the one carrying its fields.
+    pub fn type_schema(&self, type_path: &str) -> Option<&TypeSchema> {
+        self.assets
+            .get(type_path)
+            .or_else(|| self.components.get(type_path))
+    }
+
+    /// Whether the editor has learned anything about this project's types yet.
     pub fn is_empty(&self) -> bool {
-        self.components.is_empty() && self.resources.is_empty()
+        self.components.is_empty() && self.resources.is_empty() && self.assets.is_empty()
     }
 
     /// Replace the stored project types with a fresh extraction,
@@ -104,6 +126,11 @@ impl ProjectTypes {
             .events
             .iter()
             .map(|e| (e.type_path.clone(), e.clone()))
+            .collect();
+        self.assets = schema
+            .assets
+            .iter()
+            .map(|asset| (asset.type_path.clone(), asset.clone()))
             .collect();
         self.functions = schema.functions.clone();
     }
@@ -162,6 +189,7 @@ mod tests {
             description: String::new(),
             editor_description: String::new(),
             hidden: false,
+            asset: false,
             preview: String::new(),
             default_constructible: false,
             fields: Vec::new(),
@@ -189,6 +217,7 @@ mod tests {
                 return_ownership: ArgOwnership::Owned,
                 docs: None,
             }],
+            assets: Vec::new(),
         };
         let native: HashSet<String> = [
             "bevy_transform::components::Transform".to_string(),

@@ -2423,7 +2423,7 @@ fn string_field_on_focus_lost(
     }
 }
 
-fn spawn_text_row(commands: &mut Commands, parent: Entity, text: &str, depth: usize) {
+pub(super) fn spawn_text_row(commands: &mut Commands, parent: Entity, text: &str, depth: usize) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
     commands.spawn((
         Node {
@@ -3153,7 +3153,7 @@ fn spawn_enum_field(
 /// with one `FeathersMenuItem` per name in `variant_names`. Picking an item
 /// fires `Activate`, whose observer captures that item's variant name and calls
 /// `apply_enum_variant_with_undo`. The menu is parented to `parent`.
-fn spawn_enum_menu(
+pub(super) fn spawn_enum_menu(
     commands: &mut Commands,
     parent: Entity,
     variant_names: &[String],
@@ -3482,7 +3482,7 @@ pub(crate) struct ReflectListControl {
 }
 
 /// The move and remove controls beside one element of a list.
-fn spawn_list_row_controls(
+pub(super) fn spawn_list_row_controls(
     commands: &mut Commands,
     row: Entity,
     source: Entity,
@@ -3533,7 +3533,7 @@ fn spawn_list_row_controls(
 }
 
 /// The control that puts one more element on the end of a list.
-fn spawn_list_add_button(
+pub(super) fn spawn_list_add_button(
     commands: &mut Commands,
     parent: Entity,
     source: Entity,
@@ -3641,6 +3641,11 @@ fn list_items_as_json(
 ) -> Option<Vec<serde_json::Value>> {
     use bevy::reflect::GetPath;
 
+    if let Some(items) =
+        crate::definition_assets::schema_list_items(world, source, type_path, field_path)
+    {
+        return Some(items);
+    }
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
     let registration = registry.get_with_type_path(type_path)?;
@@ -3667,6 +3672,11 @@ fn default_list_item(
 ) -> Option<serde_json::Value> {
     use bevy::reflect::{GetPath, TypeInfo, prelude::ReflectDefault};
 
+    if let Some(item) =
+        crate::definition_assets::schema_default_list_item(world, source, type_path, field_path)
+    {
+        return Some(item);
+    }
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
     let registration = registry.get_with_type_path(type_path)?;

@@ -295,9 +295,8 @@ fn load_asset_entry(
     })
 }
 
-/// Reconstruct the asset's type path and a [`BsnValue`] from an entry root's
-/// non-name patch.
-fn asset_value_from_root(
+/// The type path and value a document root's first non-name patch names.
+pub fn asset_value_from_root(
     ast: &SceneBsnAst,
     root: bevy::ecs::entity::Entity,
 ) -> Option<(String, BsnValue)> {

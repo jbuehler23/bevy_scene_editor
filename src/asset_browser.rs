@@ -274,9 +274,14 @@ fn on_asset_browser_context_action(
     mut menu_state: ResMut<jackdaw_widgets::context_menu::ContextMenuState>,
 ) {
     if let Some(kind) = event.action.strip_prefix(NEW_DEFINITION_ACTION) {
+        let folder = state
+            .selected_file
+            .clone()
+            .unwrap_or_else(|| state.current_directory.to_string_lossy().into_owned());
         commands
             .operator(crate::definition_assets::AssetNewOp::ID)
             .param("type", kind.to_string())
+            .param("path", folder)
             .call();
         if let Some(menu) = menu_state.menu_entity.take()
             && let Ok(mut ec) = commands.get_entity(menu)
@@ -334,10 +339,9 @@ pub struct AssetBrowserState {
     /// When true, only scene files that contain a `Prefab` component are
     /// shown in the grid.
     pub prefabs_only: bool,
-    /// Per-path memo of whether a scene file is a prefab. Keyed by
-    /// absolute path, valued by `(mtime, is_prefab)`; invalidated when
-    /// the file's mtime changes.
-    prefab_cache: PrefabCheckCache,
+    /// Per-path memo of what each file holds, invalidated when the file's
+    /// mtime changes.
+    kind_cache: crate::asset_files::AssetKindCache,
 }
 
 impl Default for AssetBrowserState {
@@ -353,7 +357,7 @@ impl Default for AssetBrowserState {
             selected_file: None,
             last_click_time: 0.0,
             prefabs_only: false,
-            prefab_cache: PrefabCheckCache::default(),
+            kind_cache: crate::asset_files::AssetKindCache::default(),
         }
     }
 }
@@ -364,86 +368,14 @@ pub struct DirEntry {
     pub file_name: String,
     pub is_directory: bool,
     pub texture_info: Option<TextureInfo>,
-    pub is_prefab: bool,
+    /// What the file says it holds, for a document; `Scene` for everything
+    /// else.
+    pub kind: crate::asset_files::AssetFileKind,
 }
 
-/// Returns true if `path` is a prefab: a scene document whose root entity
-/// carries a `jackdaw::prefab::components::Prefab` component.
-///
-/// Both formats the editor can hold a prefab in are recognised. `.bsn` is
-/// what the editor writes today (`crate::prefab::operators::write_prefab_doc`
-/// redirects even a `.jsn` target to a `.bsn` file); `.jsn` is the legacy
-/// form. Anything else, and any I/O or parse error, is not a prefab.
-fn read_is_prefab(path: &Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("bsn") => read_is_bsn_prefab(path),
-        Some(ext) if ext.eq_ignore_ascii_case("jsn") => read_is_jsn_prefab(path),
-        _ => false,
-    }
-}
-
-/// A `.bsn` document is a prefab when one of its roots carries the `Prefab`
-/// marker.
-///
-/// Deliberately *not* routed through `crate::prefab::save_load::read_prefab_ast`:
-/// that calls `normalize_as_prefab_source`, which wraps any plain scene into
-/// an instanceable prefab, so every `.bsn` in the project would answer yes.
-/// Detection has to see the file as authored.
-fn read_is_bsn_prefab(path: &Path) -> bool {
-    use crate::prefab::resolver_bsn::PREFAB_TYPE;
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    // Cheap reject before the parser runs: the marker's type path appears
-    // verbatim in BSN text, so a document that never mentions it cannot be a
-    // prefab. Worth having when a directory holds hundreds of scenes.
-    if !text.contains(PREFAB_TYPE) {
-        return false;
-    }
-    let Ok(ast) = jackdaw_bsn::parse_bsn_text(&text) else {
-        return false;
-    };
-    ast.roots
-        .iter()
-        .any(|&root| ast.find_patch_by_type_path(root, PREFAB_TYPE).is_some())
-}
-
-/// A legacy `.jsn` document is a prefab when its first scene entity carries
-/// the `Prefab` component. Parsed as plain JSON.
-fn read_is_jsn_prefab(path: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    value
-        .get("scene")
-        .and_then(|v| v.get(0))
-        .and_then(|e| e.get("components"))
-        .and_then(|c| c.get(crate::prefab::resolver_bsn::PREFAB_TYPE))
-        .is_some()
-}
-
-#[derive(Default)]
-struct PrefabCheckCache {
-    entries: std::collections::HashMap<PathBuf, (std::time::SystemTime, bool)>,
-}
-
-impl PrefabCheckCache {
-    fn check(&mut self, path: &Path) -> bool {
-        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-        if let Some(mtime) = mtime
-            && let Some((cached_mtime, cached)) = self.entries.get(path)
-            && *cached_mtime == mtime
-        {
-            return *cached;
-        }
-        let is_prefab = read_is_prefab(path);
-        if let Some(mtime) = mtime {
-            self.entries.insert(path.to_path_buf(), (mtime, is_prefab));
-        }
-        is_prefab
+impl DirEntry {
+    pub fn is_prefab(&self) -> bool {
+        self.kind == crate::asset_files::AssetFileKind::Prefab
     }
 }
 
@@ -544,7 +476,7 @@ fn setup_initial_directory(
 fn refresh_browser_on_change(
     mut state: ResMut<AssetBrowserState>,
     mut commands: Commands,
-    definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
+    asset_kinds: Res<jackdaw_api::prelude::AssetKinds>,
     icon_font: Res<IconFont>,
     asset_server: Res<AssetServer>,
     content_query: Query<(Entity, Option<&Children>), With<AssetBrowserContent>>,
@@ -615,13 +547,13 @@ fn refresh_browser_on_change(
                     file_name,
                     is_directory,
                     texture_info,
-                    is_prefab: false,
+                    kind: crate::asset_files::AssetFileKind::Scene,
                 })
             })
             .collect();
 
-        // Compute is_prefab for scene documents (cached by mtime), then
-        // apply the prefabs_only filter if it's enabled.
+        // Read what each document holds (memoed by mtime), then apply the
+        // prefabs_only filter if it's enabled.
         for entry in entries.iter_mut() {
             if !entry.is_directory
                 && entry
@@ -630,11 +562,11 @@ fn refresh_browser_on_change(
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e.eq_ignore_ascii_case("jsn") || e.eq_ignore_ascii_case("bsn"))
             {
-                entry.is_prefab = state.prefab_cache.check(&entry.path);
+                entry.kind = state.kind_cache.check(&entry.path, &asset_kinds);
             }
         }
         if state.prefabs_only {
-            entries.retain(|e| e.is_directory || e.is_prefab);
+            entries.retain(|entry| entry.is_directory || entry.is_prefab());
         }
 
         entries.sort_by(|a, b| {
@@ -822,14 +754,13 @@ fn refresh_browser_on_change(
                 file_name: entry.file_name.clone(),
             };
 
-            let definition = definition_types.for_file(&entry.path);
-            let icon_override = if definition.is_some() {
-                Some(icons::Icon::FileBox)
-            } else if entry.is_prefab {
-                Some(icons::Icon::Package)
-            } else {
-                None
-            };
+            let definition = entry
+                .kind
+                .type_path()
+                .and_then(|type_path| asset_kinds.by_type_path(type_path));
+            let icon_override = definition
+                .map(|kind| kind.icon)
+                .or_else(|| entry.is_prefab().then_some(icons::Icon::Package));
 
             let item_entity = match state.view_mode {
                 // A `.glb`/`.gltf` grid tile gets a thumbnail slot in place
@@ -920,7 +851,7 @@ fn refresh_browser_on_change(
                       mut commands: Commands,
                       mut state: ResMut<AssetBrowserState>,
                       windows: Query<&Window>,
-                      definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
+                      asset_kinds: Res<jackdaw_api::prelude::AssetKinds>,
                       project: Option<Res<crate::project::ProjectRoot>>,
                       mut menu_state: ResMut<jackdaw_widgets::context_menu::ContextMenuState>| {
                     if click.event().button != PointerButton::Secondary {
@@ -940,18 +871,14 @@ fn refresh_browser_on_change(
                         ec.despawn();
                     }
                     let mut items: Vec<(String, String)> = Vec::new();
-                    if let Some(project) = project.as_deref() {
-                        for definition in definition_types.iter() {
-                            if definition.scanned
-                                && crate::definition_assets::definition_dir(project, definition)
-                                    == rmb_path
-                            {
-                                items.push((
-                                    format!("{NEW_DEFINITION_ACTION}{}", definition.kind),
-                                    format!("New {}", definition.label),
-                                ));
-                            }
+                    if project.is_some() && rmb_path.is_dir() {
+                        for definition in asset_kinds.iter().filter(|kind| kind.scanned()) {
+                            items.push((
+                                format!("{NEW_DEFINITION_ACTION}{}", definition.kind),
+                                format!("New {}", definition.label),
+                            ));
                         }
+                        items.sort();
                     }
                     items.push(("asset_browser.delete".to_string(), "Delete".to_string()));
                     let entries: Vec<(&str, &str)> = items
@@ -974,7 +901,7 @@ fn refresh_browser_on_change(
             // which normalizes a plain scene into an instanceable prefab.
             // Clear on DragEnd if nothing consumed it.
             let is_bsn_scene = entry.path.extension().is_some_and(|e| e == "bsn");
-            if entry.is_prefab || is_bsn_scene {
+            if entry.is_prefab() || is_bsn_scene {
                 let drag_path = entry.path.clone();
                 commands.entity(item_entity).observe(
                     move |_: On<Pointer<DragStart>>, mut drag: ResMut<ActiveAssetDrag>| {
@@ -1207,7 +1134,7 @@ fn remove_incompatible_image_nodes(
 fn handle_file_double_click(
     event: On<FileItemDoubleClicked>,
     mut state: ResMut<AssetBrowserState>,
-    definition_types: Res<jackdaw_api::prelude::DefinitionAssetTypes>,
+    asset_kinds: Res<jackdaw_api::prelude::AssetKinds>,
     mut commands: Commands,
 ) {
     if event.is_directory {
@@ -1217,7 +1144,10 @@ fn handle_file_double_click(
         return;
     }
 
-    if definition_types.for_file(Path::new(&event.path)).is_some() {
+    if crate::asset_files::read_asset_kind(Path::new(&event.path), &asset_kinds)
+        .type_path()
+        .is_some_and(|type_path| asset_kinds.by_type_path(type_path).is_some())
+    {
         commands
             .operator(crate::definition_assets::AssetOpenOp::ID)
             .param("path", event.path.clone())
@@ -1957,105 +1887,4 @@ pub fn asset_select_folder(
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
     commands.insert_resource(AssetBrowserFolderTask(task));
     OperatorResult::Finished
-}
-
-#[cfg(test)]
-mod tests {
-    use super::read_is_prefab;
-
-    #[test]
-    fn read_is_prefab_detects_prefab_component() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("p.jsn");
-        let body = r#"{
-            "jsn": { "format_version": [3,0,0], "editor_version": "0", "bevy_version": "0.18" },
-            "metadata": { "name": "p", "created": "", "modified": "" },
-            "assets": {},
-            "scene": [{
-                "components": {
-                    "jackdaw::prefab::components::Prefab": null,
-                    "bevy_ecs::name::Name": "p"
-                }
-            }]
-        }"#;
-        std::fs::write(&path, body).unwrap();
-        assert!(read_is_prefab(&path), "prefab JSON is detected");
-    }
-
-    #[test]
-    fn read_is_prefab_rejects_regular_scene() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("s.jsn");
-        let body = r#"{
-            "jsn": { "format_version": [3,0,0], "editor_version": "0", "bevy_version": "0.18" },
-            "metadata": { "name": "s", "created": "", "modified": "" },
-            "assets": {},
-            "scene": [{
-                "components": {
-                    "bevy_ecs::name::Name": "root"
-                }
-            }]
-        }"#;
-        std::fs::write(&path, body).unwrap();
-        assert!(!read_is_prefab(&path), "regular scene JSON is not a prefab");
-    }
-
-    #[test]
-    fn read_is_prefab_returns_false_on_garbage() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("g.jsn");
-        std::fs::write(&path, "not json at all").unwrap();
-        assert!(!read_is_prefab(&path), "invalid JSON returns false");
-    }
-
-    /// `.bsn` is the format the editor actually writes prefabs in, so it is
-    /// the case that matters most.
-    #[test]
-    fn read_is_prefab_detects_a_bsn_prefab() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("Cube1.bsn");
-        let body = "jackdaw::prefab::components::Prefab\n\
-                    jackdaw::prefab::components::PrefabEntityId(0)\n\
-                    #Cube1\n\
-                    bevy_camera::visibility::Visibility::Inherited\n";
-        std::fs::write(&path, body).unwrap();
-        assert!(read_is_prefab(&path), "a .bsn prefab is detected");
-    }
-
-    #[test]
-    fn read_is_prefab_rejects_a_plain_bsn_scene() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("scene.bsn");
-        let body = "#Root\n\
-                    bevy_transform::components::transform::Transform\n\
-                    bevy_camera::visibility::Visibility::Inherited\n";
-        std::fs::write(&path, body).unwrap();
-        assert!(
-            !read_is_prefab(&path),
-            "a hand-authored scene is not a prefab"
-        );
-    }
-
-    /// The marker has to be on a root. A document that only mentions the
-    /// type path in passing must not pass the filter.
-    #[test]
-    fn read_is_prefab_rejects_a_bsn_that_only_mentions_the_marker() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("named.bsn");
-        let body = "#\"jackdaw::prefab::components::Prefab\"\n\
-                    bevy_camera::visibility::Visibility::Inherited\n";
-        std::fs::write(&path, body).unwrap();
-        assert!(
-            !read_is_prefab(&path),
-            "the marker as a name is not the marker as a component"
-        );
-    }
-
-    #[test]
-    fn read_is_prefab_returns_false_on_unparseable_bsn() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("broken.bsn");
-        std::fs::write(&path, "jackdaw::prefab::components::Prefab {{{{").unwrap();
-        assert!(!read_is_prefab(&path), "a parse failure is not a prefab");
-    }
 }

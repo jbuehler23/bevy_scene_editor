@@ -306,6 +306,7 @@ fn project_schema() -> jackdaw_schema::ProjectSchema {
             description: String::new(),
             editor_description: String::new(),
             hidden: false,
+            asset: false,
             preview: String::new(),
             default_constructible: true,
             fields,
@@ -325,6 +326,7 @@ fn project_schema() -> jackdaw_schema::ProjectSchema {
                 vec![jackdaw_schema::FieldSchema {
                     name: "current".to_string(),
                     type_path: "f32".to_string(),
+                    item_type_path: String::new(),
                 }],
             ),
             entry(PROJECT_ENUM, jackdaw_schema::TypeKind::Enum, Vec::new()),
@@ -332,6 +334,7 @@ fn project_schema() -> jackdaw_schema::ProjectSchema {
         resources: Vec::new(),
         events: Vec::new(),
         functions: Vec::new(),
+        assets: Vec::new(),
     }
 }
 

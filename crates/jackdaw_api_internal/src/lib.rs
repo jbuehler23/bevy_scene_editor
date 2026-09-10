@@ -32,7 +32,7 @@
 //! }
 //! ```
 
-pub mod definition_assets;
+pub mod asset_kinds;
 pub mod entity_icons;
 pub mod extensions_config;
 pub mod inspector;
@@ -62,7 +62,12 @@ use operator::{CallOperatorSettings, Operator};
 use registries::WindowExtensionRegistry;
 use snapshot::{ActiveSnapshotter, SceneSnapshot};
 
-pub use definition_assets::{DefinitionAssetType, DefinitionAssetTypes};
+pub use asset_kinds::{AssetKind, AssetKindSource, AssetKinds};
+
+/// The name an asset kind went by before every kind shared one registry.
+pub type DefinitionAssetType = AssetKind;
+/// The name the kind registry went by before every kind shared one.
+pub type DefinitionAssetTypes = AssetKinds;
 pub use entity_icons::EntityIconRegistry;
 pub use jackdaw_api_macros as macros;
 pub use jackdaw_api_macros::operator;
@@ -97,7 +102,7 @@ pub mod prelude {
     pub use crate::{
         ExtensionContext, ExtensionPoint, ExtensionRegistrar, JackdawExtension,
         MenuEntryDescriptor, PanelContext, WindowDescriptor,
-        definition_assets::{DefinitionAssetType, DefinitionAssetTypes},
+        asset_kinds::{AssetKind, AssetKindSource, AssetKinds},
         lifecycle::{
             ActiveModalQuery, Extension, ExtensionAppExt as _, ExtensionCatalog, ExtensionKind,
             RegisteredMenuEntry, RegisteredWindow,
@@ -270,16 +275,14 @@ impl<'a> ExtensionContext<'a> {
         self
     }
 
-    /// Register a definition asset type, a reflected asset the project keeps
-    /// one value per file. The registration goes when the extension unloads.
-    pub fn register_definition_asset(&mut self, definition: DefinitionAssetType) -> &mut Self {
+    /// Register an asset kind, a reflected type the project keeps one value
+    /// per file. The registration goes when the extension unloads.
+    pub fn register_asset_kind(&mut self, asset_kind: AssetKind) -> &mut Self {
         let ext = self.extension_entity;
-        let kind = definition.kind.clone();
-        self.world
-            .resource_mut::<DefinitionAssetTypes>()
-            .register(definition);
+        let kind = asset_kind.kind.clone();
+        self.world.resource_mut::<AssetKinds>().register(asset_kind);
         self.world.spawn((
-            crate::definition_assets::RegisteredDefinitionAsset { kind },
+            crate::asset_kinds::RegisteredAssetKind { kind },
             ChildOf(ext),
         ));
         self

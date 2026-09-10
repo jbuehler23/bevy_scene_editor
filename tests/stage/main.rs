@@ -19,6 +19,7 @@ mod gltf_authoring;
 mod mesh_quick_menu;
 mod modeling_essentials;
 mod positionable_mirror_plane;
+mod project_definitions;
 mod selection_undo;
 mod synthetic_input;
 mod ui_align;
