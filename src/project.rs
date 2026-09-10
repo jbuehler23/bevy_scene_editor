@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -72,6 +73,10 @@ pub struct ProjectConfig {
     /// Index into `last_open_tabs` of the tab that was active. Clamped on load.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub last_active_tab: usize,
+    /// The folder each native dialog purpose was last used in, keyed by
+    /// purpose, so a dialog reopens where the user left it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dialog_directories: BTreeMap<String, PathBuf>,
 }
 
 fn is_zero(n: &usize) -> bool {

@@ -11,10 +11,20 @@ normal Bevy crate: a folder with a `Cargo.toml`, a
 - `Ctrl+S` saves the current scene to its on-disk path. The
   first save prompts for a path; pick something under
   `assets/`.
-- `Ctrl+O` opens a scene in a new tab. The picker starts in the
-  current project's `assets/` folder.
+- `Ctrl+O` opens a scene in a new tab.
 - `Ctrl+T` creates a new empty scene tab; it is
   unsaved until you `Ctrl+S` it.
+
+The dialogs that reach for project files -- opening and saving
+scenes, picking a prefab, a reference image, a preview model or
+a texture -- start in the folder you are already looking at: the
+asset browser's folder while it points inside the project,
+otherwise the folder of the scene you have open, otherwise the
+project's `assets/`. Installing an extension bundle instead
+starts where you picked the last bundle from, since bundles
+live outside the project. Either way the folder you pick from
+is recorded in `.jackdaw/project.json` and read back when you
+reopen the project.
 
 Scene files are human-readable, line-diffable, and designed to
 read in `git diff` without making you cry. Legacy `.jsn` scenes

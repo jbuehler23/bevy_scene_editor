@@ -4,9 +4,7 @@ use bevy::asset::LoadState;
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
-use bevy::window::{PrimaryWindow, RawHandleWrapper};
 use path_slash::PathExt as _;
-use rfd::AsyncFileDialog;
 
 use crate::selection::Selection;
 
@@ -129,22 +127,13 @@ pub fn open_reference_image_picker(world: &mut World) {
     if world.contains_resource::<ReferenceImagePickTask>() {
         return;
     }
-    let raw_handle = world
-        .query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>()
-        .single(world)
-        .ok()
-        .cloned();
-    let mut dialog = AsyncFileDialog::new()
-        .set_title("Select reference image")
-        .add_filter(
-            "Images",
-            &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
-        );
-    if let Some(ref rh) = raw_handle {
-        // SAFETY: called on the main thread from an exclusive context
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog =
+        crate::native_dialog::file_dialog(world, crate::native_dialog::DialogPurpose::Image)
+            .set_title("Select reference image")
+            .add_filter(
+                "Images",
+                &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
+            );
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
     world.insert_resource(ReferenceImagePickTask(task));
 }
@@ -160,6 +149,11 @@ fn poll_reference_image_pick(world: &mut World) {
     let Some(file_handle) = result else {
         return;
     };
+    crate::native_dialog::remember_pick(
+        world,
+        crate::native_dialog::DialogPurpose::Image,
+        file_handle.path(),
+    );
     let path = file_handle.path().to_slash_lossy().into_owned();
     spawn_reference_image_in_world(world, &path, Vec3::ZERO);
 }

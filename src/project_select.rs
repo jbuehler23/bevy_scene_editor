@@ -14,7 +14,7 @@ use jackdaw_feathers::{
 };
 use jackdaw_localization::LocalizedText;
 use jackdaw_project_build::project_manifest;
-use rfd::{AsyncFileDialog, FileHandle};
+use rfd::FileHandle;
 
 use crate::{
     AppState,
@@ -1060,13 +1060,11 @@ fn pick_project_folder(
         FolderPurpose::Open => "Select project folder",
         FolderPurpose::Import => "Select the Bevy project to import",
     };
-    let mut dialog = AsyncFileDialog::new().set_title(title);
-
-    if let Ok(rh) = raw_handle.single() {
-        // SAFETY: called on the main thread during an observer
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog = crate::native_dialog::dialog_at(
+        crate::native_dialog::launcher_project_directory(),
+        raw_handle.single().ok(),
+    )
+    .set_title(title);
 
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
     commands.insert_resource(FolderDialogTask { task, purpose });
@@ -2919,17 +2917,27 @@ fn on_browse_new_location(
     _: On<Pointer<Click>>,
     mut commands: Commands,
     raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
+    state: Res<NewProjectState>,
 ) {
-    let mut dialog = AsyncFileDialog::new().set_title("Choose parent directory");
-    if let Ok(rh) = raw_handle.single() {
-        // SAFETY: called on the main thread during an observer.
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog = crate::native_dialog::dialog_at(
+        new_project_browse_directory(&state.location),
+        raw_handle.single().ok(),
+    )
+    .set_title("Choose parent directory");
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
     commands.queue(move |world: &mut World| {
         world.resource_mut::<NewProjectState>().folder_task = Some(task);
     });
+}
+
+/// Where the New Project browse starts: the location the field already
+/// names, climbing to its nearest existing ancestor.
+fn new_project_browse_directory(location: &Path) -> Option<PathBuf> {
+    location
+        .ancestors()
+        .find(|ancestor| ancestor.is_dir())
+        .map(Path::to_path_buf)
+        .or_else(crate::native_dialog::launcher_project_directory)
 }
 
 fn spawn_reset_location_button(
@@ -3198,6 +3206,25 @@ fn poll_new_project_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_new_project_browse_starts_where_the_location_field_points() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let location = dir.path().join("Games");
+        std::fs::create_dir_all(&location).expect("the location folder");
+
+        let start = new_project_browse_directory(&location).expect("a start directory");
+        assert_eq!(start, location);
+    }
+
+    #[test]
+    fn a_location_that_does_not_exist_yet_browses_its_nearest_parent() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let location = dir.path().join("Games/Unwritten");
+
+        let start = new_project_browse_directory(&location).expect("a start directory");
+        assert_eq!(start, dir.path());
+    }
 
     /// The card builders need the two font resources, the modal state,
     /// and enough of the asset/scene stack for `bsn!` `spawn_scene`

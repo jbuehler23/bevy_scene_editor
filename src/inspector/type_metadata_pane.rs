@@ -6,14 +6,13 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use bevy::ui_widgets::{Activate, ToggleChecked};
-use bevy::window::{PrimaryWindow, RawHandleWrapper, SystemCursorIcon};
+use bevy::window::SystemCursorIcon;
 use jackdaw_feathers::icons::{Icon, icon_scene};
 use jackdaw_feathers::text_edit::{self, TextEditCommitEvent, TextEditProps};
 use jackdaw_feathers::tokens;
 use jackdaw_feathers::tooltip::Tooltip;
 use jackdaw_feathers::utils::find_ancestor;
 use jackdaw_widgets::collapsible::CollapsibleSection;
-use rfd::AsyncFileDialog;
 
 use crate::preview_model::import_preview_model;
 use crate::project::ProjectRoot;
@@ -380,25 +379,10 @@ fn open_preview_picker(world: &mut World, type_path: String) {
     if world.contains_resource::<PreviewPickTask>() {
         return;
     }
-    let assets_dir = world
-        .get_resource::<ProjectRoot>()
-        .map(ProjectRoot::assets_dir);
-    let raw_handle = world
-        .query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>()
-        .single(world)
-        .ok()
-        .cloned();
-    let mut dialog = AsyncFileDialog::new()
-        .set_title("Select preview model")
-        .add_filter("glTF", &["glb", "gltf"]);
-    if let Some(dir) = &assets_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    if let Some(ref rh) = raw_handle {
-        // SAFETY: called on the main thread from an exclusive context
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog =
+        crate::native_dialog::file_dialog(world, crate::native_dialog::DialogPurpose::Model)
+            .set_title("Select preview model")
+            .add_filter("glTF", &["glb", "gltf"]);
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
     world.insert_resource(PreviewPickTask { type_path, task });
 }
@@ -416,6 +400,7 @@ fn poll_preview_pick(world: &mut World) {
         return;
     };
     let picked = file_handle.path().to_path_buf();
+    crate::native_dialog::remember_pick(world, crate::native_dialog::DialogPurpose::Model, &picked);
     let Some(project) = world.get_resource::<ProjectRoot>() else {
         return;
     };

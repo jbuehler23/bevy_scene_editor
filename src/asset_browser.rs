@@ -10,7 +10,7 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureSampleType},
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
-    window::{PrimaryWindow, RawHandleWrapper, SystemCursorIcon},
+    window::{PrimaryWindow, SystemCursorIcon},
 };
 use jackdaw_feathers::button::{
     ButtonClickEvent, ButtonOperatorCall, ButtonProps, ButtonVariant, IconButtonProps, button,
@@ -21,7 +21,6 @@ use jackdaw_feathers::tooltip::Tooltip;
 use jackdaw_feathers::{file_browser, icons, icons::EditorFont, icons::IconFont, tokens};
 use jackdaw_widgets::file_browser::{FileBrowserItem, FileItemDoubleClicked};
 use path_slash::PathExt as _;
-use rfd::AsyncFileDialog;
 
 use crate::{
     EditorEntity,
@@ -358,6 +357,18 @@ impl Default for AssetBrowserState {
             last_click_time: 0.0,
             prefabs_only: false,
             kind_cache: crate::asset_files::AssetKindCache::default(),
+        }
+    }
+}
+
+impl AssetBrowserState {
+    /// A browser rooted at `directory` and showing it.
+    pub fn at(directory: impl Into<PathBuf>) -> Self {
+        let directory = directory.into();
+        Self {
+            current_directory: directory.clone(),
+            root_directory: directory,
+            ..Self::default()
         }
     }
 }
@@ -1871,20 +1882,18 @@ pub(crate) fn asset_cycle_array_layer(
     label = "Select Assets Folder",
     description = "Choose a different folder as the assets directory."
 )]
-pub fn asset_select_folder(
-    _: In<OperatorParameters>,
-    mut commands: Commands,
-    raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
-) -> OperatorResult {
-    let mut dialog = AsyncFileDialog::new().set_title("Select assets directory");
-    if let Ok(rh) = raw_handle.single() {
-        // SAFETY: the primary window is open, so its `RawHandleWrapper`
-        // points to a live OS handle. We use the returned wrapper only
-        // to parent the modal dialog within this scope.
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
-    let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
-    commands.insert_resource(AssetBrowserFolderTask(task));
+pub fn asset_select_folder(_: In<OperatorParameters>, mut commands: Commands) -> OperatorResult {
+    commands.queue(|world: &mut World| {
+        if world.contains_resource::<AssetBrowserFolderTask>() {
+            return;
+        }
+        let current = world
+            .get_resource::<AssetBrowserState>()
+            .map(|state| state.current_directory.clone());
+        let dialog = crate::native_dialog::dialog_starting_at(world, current)
+            .set_title("Select assets directory");
+        let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
+        world.insert_resource(AssetBrowserFolderTask(task));
+    });
     OperatorResult::Finished
 }
