@@ -35,6 +35,7 @@ fn field(name: &str, type_path: &str) -> FieldSchema {
     FieldSchema {
         name: name.to_string(),
         type_path: type_path.to_string(),
+        item_type_path: String::new(),
     }
 }
 
@@ -51,6 +52,7 @@ fn schema_type(type_path: &str, kind: TypeKind, fields: Vec<FieldSchema>) -> Typ
         description: String::new(),
         editor_description: String::new(),
         hidden: false,
+        asset: false,
         preview: String::new(),
         default_constructible: true,
         fields,
@@ -142,6 +144,7 @@ fn fixture_schema() -> ProjectSchema {
                 docs: None,
             },
         ],
+        assets: Vec::new(),
     }
 }
 

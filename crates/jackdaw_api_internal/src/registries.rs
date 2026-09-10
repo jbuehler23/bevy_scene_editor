@@ -12,8 +12,8 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<WindowExtensionRegistry>()
         .init_resource::<WindowRegistry>()
         .init_resource::<crate::widgets::WidgetRegistry>()
-        .init_resource::<crate::definition_assets::DefinitionAssetTypes>()
-        .add_observer(crate::definition_assets::cleanup_definition_asset_on_remove);
+        .init_resource::<crate::asset_kinds::AssetKinds>()
+        .add_observer(crate::asset_kinds::cleanup_asset_kind_on_remove);
 }
 
 #[derive(Resource, Default)]

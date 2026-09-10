@@ -339,11 +339,13 @@ fn a_schema_only_type_previews_as_a_disabled_row() {
             description: String::new(),
             editor_description: String::new(),
             hidden: false,
+            asset: false,
             preview: String::new(),
             default_constructible: true,
             fields: vec![FieldSchema {
                 name: "current".to_string(),
                 type_path: "f32".to_string(),
+                item_type_path: String::new(),
             }],
             kind: TypeKind::Struct,
             default: None,
@@ -354,6 +356,7 @@ fn a_schema_only_type_previews_as_a_disabled_row() {
         resources: Vec::new(),
         events: Vec::new(),
         functions: Vec::new(),
+        assets: Vec::new(),
     };
     {
         let native = jackdaw::project_types::native_type_paths(
@@ -1155,6 +1158,7 @@ fn schema_type(type_path: &str, kind: TypeKind, fields: &[(&str, &str)]) -> Type
             .unwrap_or(type_path)
             .to_string(),
         module_path: String::new(),
+        asset: false,
         category: String::new(),
         description: String::new(),
         editor_description: String::new(),
@@ -1166,6 +1170,7 @@ fn schema_type(type_path: &str, kind: TypeKind, fields: &[(&str, &str)]) -> Type
             .map(|(name, type_path)| FieldSchema {
                 name: (*name).to_string(),
                 type_path: (*type_path).to_string(),
+                item_type_path: String::new(),
             })
             .collect(),
         kind,

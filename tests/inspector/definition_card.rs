@@ -43,14 +43,8 @@ fn app_with_open_definition() -> (App, tempfile::TempDir) {
             config: default(),
         });
     app.world_mut()
-        .resource_mut::<DefinitionAssetTypes>()
-        .register(DefinitionAssetType::new(
-            "mob",
-            "Mob",
-            MobDef::type_path(),
-            "content/mobs",
-            ".mob.bsn",
-        ));
+        .resource_mut::<AssetKinds>()
+        .register(AssetKind::extension("mob", "Mob", MobDef::type_path()));
     app.world_mut()
         .spawn(jackdaw::layout::inspector_components_content(default()));
     app.world_mut()
@@ -86,7 +80,9 @@ fn open_mob(app: &App) -> MobDef {
         .world()
         .get::<DefinitionAssetEdit>(entity)
         .expect("the entity is editing a definition")
-        .handle
+        .value
+        .handle()
+        .expect("a compiled definition")
         .clone();
     app.world()
         .resource::<Assets<MobDef>>()

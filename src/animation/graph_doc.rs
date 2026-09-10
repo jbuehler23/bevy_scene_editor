@@ -254,7 +254,11 @@ pub fn write_graph_file(world: &mut World) -> Option<PathBuf> {
     let file = graph_file_path(world.get_resource::<ProjectRoot>()?, &path)?;
     let text = {
         let registry = world.resource::<AppTypeRegistry>().read();
-        graph_to_bsn(&world.resource::<AnimationGraphDoc>().def, &registry)
+        let body = graph_to_bsn(&world.resource::<AnimationGraphDoc>().def, &registry);
+        crate::asset_files::asset_file_text(
+            <AnimationGraphDef as bevy::reflect::TypePath>::type_path(),
+            &body,
+        )
     };
     if let Some(parent) = file.parent()
         && let Err(err) = std::fs::create_dir_all(parent)

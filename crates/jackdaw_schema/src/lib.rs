@@ -78,6 +78,10 @@ pub struct ProjectSchema {
     /// Functions the game registered for bindings to call.
     #[serde(default)]
     pub functions: Vec<FunctionSchema>,
+    /// The types the game registers as reflected assets, plus every project
+    /// type their fields reach. Empty in a schema that does not carry them.
+    #[serde(default)]
+    pub assets: Vec<TypeSchema>,
 }
 
 /// The shape and editor metadata of one reflected type.
@@ -98,6 +102,9 @@ pub struct TypeSchema {
     pub editor_description: String,
     /// `@EditorHidden`: skip in the picker.
     pub hidden: bool,
+    /// Whether the game registers this type as a reflected asset.
+    #[serde(default)]
+    pub asset: bool,
     /// `@EditorPreview` glTF path under `assets/`, or empty.
     #[serde(default)]
     pub preview: String,
@@ -190,6 +197,10 @@ pub struct FieldSchema {
     pub name: String,
     /// The field's reflect type path.
     pub type_path: String,
+    /// For a list or array field, the element type's reflect type path;
+    /// empty for every other field.
+    #[serde(default)]
+    pub item_type_path: String,
 }
 
 /// The reflect kind of a schema'd type.
@@ -206,13 +217,16 @@ pub enum TypeKind {
 #[cfg(feature = "reflect")]
 mod extract {
     use super::*;
+    use std::collections::{HashSet, VecDeque};
+
+    use bevy::asset::ReflectAsset;
     use bevy::ecs::entity::Entity;
     use bevy::ecs::reflect::{ReflectComponent, ReflectEvent, ReflectFromWorld, ReflectResource};
-    use bevy::reflect::enums::VariantInfo;
+    use bevy::reflect::enums::{EnumInfo, VariantInfo};
     use bevy::reflect::func::FunctionRegistry;
     use bevy::reflect::func::args::Ownership;
     use bevy::reflect::serde::ReflectSerializer;
-    use bevy::reflect::{NamedField, TypeInfo, TypeRegistration, TypeRegistry};
+    use bevy::reflect::{NamedField, TypeInfo, TypeRegistration, TypeRegistry, UnnamedField};
     use jackdaw_scene_types::{EditorCategory, EditorDescription, EditorHidden, EditorPreview};
 
     /// Build the schema for this process's reflected types.
@@ -318,7 +332,7 @@ mod extract {
             .map(|p| p.0.to_string())
             .unwrap_or_default();
 
-        let (kind, fields, variants) = shape_of(info);
+        let (kind, fields, variants) = shape_of(info, registry);
         let entity_fields = info
             .as_struct()
             .map(|s| {
@@ -352,6 +366,7 @@ mod extract {
             description,
             editor_description,
             hidden,
+            asset: false,
             preview,
             default_constructible: default.is_some(),
             fields,
@@ -364,15 +379,15 @@ mod extract {
     }
 
     /// A type's kind, its own fields, and (for enums) its variants.
-    fn shape_of(info: &TypeInfo) -> (TypeKind, Vec<FieldSchema>, Vec<VariantSchema>) {
+    fn shape_of(
+        info: &TypeInfo,
+        registry: &TypeRegistry,
+    ) -> (TypeKind, Vec<FieldSchema>, Vec<VariantSchema>) {
         match info {
             TypeInfo::Struct(s) => (
                 TypeKind::Struct,
                 s.iter()
-                    .map(|field| FieldSchema {
-                        name: field.name().to_string(),
-                        type_path: field.type_path().to_string(),
-                    })
+                    .map(|field| named_field_schema(field, registry))
                     .collect(),
                 Vec::new(),
             ),
@@ -380,38 +395,29 @@ mod extract {
                 TypeKind::TupleStruct,
                 s.iter()
                     .enumerate()
-                    .map(|(i, field)| FieldSchema {
-                        name: i.to_string(),
-                        type_path: field.type_path().to_string(),
-                    })
+                    .map(|(i, field)| unnamed_field_schema(i, field, registry))
                     .collect(),
                 Vec::new(),
             ),
             TypeInfo::Enum(e) => (
                 TypeKind::Enum,
                 Vec::new(),
-                e.iter().map(variant_of).collect(),
+                e.iter().map(|v| variant_of(v, registry)).collect(),
             ),
             _ => (TypeKind::Marker, Vec::new(), Vec::new()),
         }
     }
 
-    fn variant_of(variant: &VariantInfo) -> VariantSchema {
+    fn variant_of(variant: &VariantInfo, registry: &TypeRegistry) -> VariantSchema {
         let fields = match variant {
             VariantInfo::Struct(s) => s
                 .iter()
-                .map(|field| FieldSchema {
-                    name: field.name().to_string(),
-                    type_path: field.type_path().to_string(),
-                })
+                .map(|field| named_field_schema(field, registry))
                 .collect(),
             VariantInfo::Tuple(t) => t
                 .iter()
                 .enumerate()
-                .map(|(i, field)| FieldSchema {
-                    name: i.to_string(),
-                    type_path: field.type_path().to_string(),
-                })
+                .map(|(i, field)| unnamed_field_schema(i, field, registry))
                 .collect(),
             VariantInfo::Unit(_) => Vec::new(),
         };
@@ -419,6 +425,183 @@ mod extract {
             name: variant.name().to_string(),
             fields,
         }
+    }
+
+    fn named_field_schema(field: &NamedField, registry: &TypeRegistry) -> FieldSchema {
+        FieldSchema {
+            name: field.name().to_string(),
+            type_path: field.type_path().to_string(),
+            item_type_path: item_type_path(field.type_info(), field.type_id(), registry),
+        }
+    }
+
+    fn unnamed_field_schema(
+        index: usize,
+        field: &UnnamedField,
+        registry: &TypeRegistry,
+    ) -> FieldSchema {
+        FieldSchema {
+            name: index.to_string(),
+            type_path: field.type_path().to_string(),
+            item_type_path: item_type_path(field.type_info(), field.type_id(), registry),
+        }
+    }
+
+    /// The element type of a list or array field, empty for anything else.
+    /// An `Option` is an enum here, not a list, and reports nothing.
+    fn item_type_path(
+        declared: Option<&'static TypeInfo>,
+        type_id: std::any::TypeId,
+        registry: &TypeRegistry,
+    ) -> String {
+        match registry.get_type_info(type_id).or(declared) {
+            Some(TypeInfo::List(list)) => list.item_ty().path().to_string(),
+            Some(TypeInfo::Array(array)) => array.item_ty().path().to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// Describes every type the game registers as a reflected asset, plus the
+    /// project types their fields reach.
+    ///
+    /// "Project" means the crate segment of a discovered root: a field whose
+    /// type comes from one of those crates is described too, recursively,
+    /// while an engine type is named but not walked into.
+    pub fn extract_asset_types(registry: &TypeRegistry) -> Vec<TypeSchema> {
+        let resolved: Vec<&str> = registry
+            .iter()
+            .filter(|registration| registration.data::<ReflectAsset>().is_some())
+            .map(|registration| registration.type_info().type_path())
+            .filter(|path| is_project_crate(crate_segment(path)))
+            .collect();
+        let crates: HashSet<&str> = resolved.iter().map(|path| crate_segment(path)).collect();
+        let root_paths: HashSet<&str> = resolved.iter().copied().collect();
+
+        let mut queue: VecDeque<String> = resolved.iter().map(|p| (*p).to_string()).collect();
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut described: Vec<TypeSchema> = Vec::new();
+        while let Some(path) = queue.pop_front() {
+            if !visited.insert(path.clone()) {
+                continue;
+            }
+            let Some(registration) = registry.get_with_type_path(&path) else {
+                continue;
+            };
+            let info = registration.type_info();
+            let describable = matches!(
+                info,
+                TypeInfo::Struct(_) | TypeInfo::TupleStruct(_) | TypeInfo::Enum(_)
+            );
+            let belongs =
+                root_paths.contains(path.as_str()) || crates.contains(crate_segment(path.as_str()));
+            if !describable || !belongs {
+                continue;
+            }
+            let mut described_type = type_schema_for(registration, registry);
+            described_type.asset = root_paths.contains(path.as_str());
+            described.push(described_type);
+            for reached in types_reached_by(info) {
+                queue.push_back(reached);
+            }
+        }
+        described.sort_by(|a, b| a.type_path.cmp(&b.type_path));
+        described
+    }
+
+    /// The part of a reflect type path before its first `::`.
+    fn crate_segment(type_path: &str) -> &str {
+        type_path.split("::").next().unwrap_or(type_path)
+    }
+
+    /// Whether a crate segment names the game's own code rather than the
+    /// engine, the editor, or the standard library. Only crate names the
+    /// engine itself ships are excluded, so a game crate that merely reads
+    /// like one keeps its types.
+    fn is_project_crate(segment: &str) -> bool {
+        !matches!(segment, "bevy" | "jackdaw" | "std" | "core" | "alloc")
+            && !segment.starts_with("bevy_")
+            && !segment.starts_with("jackdaw_")
+    }
+
+    /// Type paths a type's own fields name, with containers flattened to
+    /// what they hold.
+    fn types_reached_by(info: &TypeInfo) -> Vec<String> {
+        let mut reached = Vec::new();
+        match info {
+            TypeInfo::Struct(s) => {
+                for field in s.iter() {
+                    reach_into(field.type_info(), field.type_path(), &mut reached);
+                }
+            }
+            TypeInfo::TupleStruct(s) => {
+                for field in s.iter() {
+                    reach_into(field.type_info(), field.type_path(), &mut reached);
+                }
+            }
+            TypeInfo::Enum(e) => {
+                for variant in e.iter() {
+                    reach_into_variant(variant, &mut reached);
+                }
+            }
+            _ => {}
+        }
+        reached
+    }
+
+    fn reach_into_variant(variant: &VariantInfo, reached: &mut Vec<String>) {
+        match variant {
+            VariantInfo::Struct(s) => {
+                for field in s.iter() {
+                    reach_into(field.type_info(), field.type_path(), reached);
+                }
+            }
+            VariantInfo::Tuple(t) => {
+                for field in t.iter() {
+                    reach_into(field.type_info(), field.type_path(), reached);
+                }
+            }
+            VariantInfo::Unit(_) => {}
+        }
+    }
+
+    /// Records the type at `path`, stepping through a list, array, set, map,
+    /// tuple or `Option` to what it holds.
+    fn reach_into(info: Option<&'static TypeInfo>, path: &str, reached: &mut Vec<String>) {
+        let Some(info) = info else {
+            reached.push(path.to_string());
+            return;
+        };
+        match info {
+            TypeInfo::List(list) => {
+                reach_into(list.item_info(), list.item_ty().path(), reached);
+            }
+            TypeInfo::Array(array) => {
+                reach_into(array.item_info(), array.item_ty().path(), reached);
+            }
+            TypeInfo::Set(set) => {
+                reach_into(None, set.value_ty().path(), reached);
+            }
+            TypeInfo::Map(map) => {
+                reach_into(map.key_info(), map.key_ty().path(), reached);
+                reach_into(map.value_info(), map.value_ty().path(), reached);
+            }
+            TypeInfo::Tuple(tuple) => {
+                for field in tuple.iter() {
+                    reach_into(field.type_info(), field.type_path(), reached);
+                }
+            }
+            TypeInfo::Enum(e) if is_option(e) => {
+                for variant in e.iter() {
+                    reach_into_variant(variant, reached);
+                }
+            }
+            _ => reached.push(info.type_path().to_string()),
+        }
+    }
+
+    fn is_option(info: &EnumInfo) -> bool {
+        info.type_path_table().crate_name() == Some("core")
+            && info.type_path_table().ident() == Some("Option")
     }
 
     fn custom_attributes(info: &TypeInfo) -> Option<&bevy::reflect::attributes::CustomAttributes> {
@@ -432,7 +615,9 @@ mod extract {
 }
 
 #[cfg(feature = "reflect")]
-pub use extract::{extract_derived_schema, extract_from_registry, extract_functions};
+pub use extract::{
+    extract_asset_types, extract_derived_schema, extract_from_registry, extract_functions,
+};
 
 #[cfg(test)]
 mod tests {
@@ -477,6 +662,8 @@ mod tests {
         assert_eq!(schema.components.len(), 1);
         assert!(schema.events.is_empty());
         assert!(schema.functions.is_empty());
+        assert!(schema.assets.is_empty());
+        assert!(!schema.components[0].asset);
         assert!(schema.components[0].variants.is_empty());
         assert!(schema.components[0].entity_fields.is_empty());
         assert!(!schema.components[0].fills_gaps);
@@ -550,8 +737,9 @@ mod tests {
 #[cfg(all(test, feature = "reflect"))]
 mod extract_tests {
     use super::*;
+    use bevy::asset::{Asset, ReflectAsset};
     use bevy::prelude::*;
-    use bevy::reflect::{GetTypeRegistration, TypeRegistry};
+    use bevy::reflect::{FromReflect, GetTypeRegistration, TypePath, TypeRegistry};
 
     /// An event whose fields a binding can fill, and which reflection can
     /// build when a binding leaves one unmapped.
@@ -713,5 +901,172 @@ mod extract_tests {
             .expect("doubled is registered");
         assert_eq!(found.arg_ownerships, [ArgOwnership::Ref]);
         assert!(!found.callable_by_value());
+    }
+
+    /// A nested type an asset's list field holds.
+    #[derive(Reflect, Default)]
+    #[type_path = "my_game::content"]
+    #[reflect(Default)]
+    struct Effect {
+        magnitude: f32,
+    }
+
+    #[derive(Reflect, Default)]
+    #[type_path = "my_game::content"]
+    #[reflect(Default)]
+    enum Rarity {
+        #[default]
+        Common,
+        Rare,
+    }
+
+    /// An asset the game registers: a scalar, an enum, a list of a nested
+    /// type, and an engine type the closure must not walk into.
+    #[derive(Asset, Reflect, Default)]
+    #[type_path = "my_game::content"]
+    #[reflect(Default)]
+    struct ItemDef {
+        display_name: String,
+        rarity: Rarity,
+        effects: Vec<Effect>,
+        tag: Name,
+    }
+
+    /// An asset the engine registers, which the game did not write.
+    #[derive(Asset, Reflect, Default)]
+    #[type_path = "bevy_image::image"]
+    #[reflect(Default)]
+    struct Image {
+        width: u32,
+    }
+
+    fn register_asset<T: GetTypeRegistration + FromReflect + Asset>(registry: &mut TypeRegistry) {
+        registry.register::<T>();
+        registry.register_type_data::<T, ReflectAsset>();
+    }
+
+    fn assets_of<T: GetTypeRegistration + FromReflect + Asset>() -> Vec<TypeSchema> {
+        let mut registry = TypeRegistry::default();
+        register_asset::<T>(&mut registry);
+        extract_asset_types(&registry)
+    }
+
+    #[test]
+    fn a_registered_asset_type_reports_its_fields() {
+        let assets = assets_of::<ItemDef>();
+        let item = find(&assets, "ItemDef");
+        assert_eq!(item.kind, TypeKind::Struct);
+        assert!(item.asset);
+
+        let field = |name: &str| {
+            item.fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("no {name} field"))
+        };
+        assert_eq!(field("display_name").type_path, "alloc::string::String");
+        assert!(field("display_name").item_type_path.is_empty());
+        assert_eq!(field("rarity").type_path, Rarity::type_path());
+        assert!(field("rarity").item_type_path.is_empty());
+        assert_eq!(field("effects").item_type_path, Effect::type_path());
+    }
+
+    #[test]
+    fn the_asset_closure_reaches_project_types_but_not_engine_types() {
+        let assets = assets_of::<ItemDef>();
+        let paths: Vec<&str> = assets.iter().map(|d| d.type_path.as_str()).collect();
+        assert!(paths.contains(&Effect::type_path()), "got {paths:?}");
+        assert!(paths.contains(&Rarity::type_path()), "got {paths:?}");
+        assert!(!paths.contains(&Name::type_path()), "got {paths:?}");
+        assert!(paths.windows(2).all(|pair| pair[0] < pair[1]), "{paths:?}");
+    }
+
+    #[test]
+    fn a_game_s_asset_types_are_reported_and_the_engine_s_are_not() {
+        let mut registry = TypeRegistry::default();
+        register_asset::<ItemDef>(&mut registry);
+        register_asset::<Image>(&mut registry);
+        let assets = extract_asset_types(&registry);
+
+        let paths: Vec<&str> = assets.iter().map(|d| d.type_path.as_str()).collect();
+        assert!(paths.contains(&ItemDef::type_path()), "got {paths:?}");
+        assert!(!paths.contains(&Image::type_path()), "got {paths:?}");
+    }
+
+    /// An asset in a game crate whose name only reads like the engine's.
+    #[derive(Asset, Reflect, Default)]
+    #[type_path = "bevygone::content"]
+    #[reflect(Default)]
+    struct SpellDef {
+        cost: u32,
+    }
+
+    #[test]
+    fn a_game_crate_whose_name_reads_like_the_engine_s_keeps_its_asset_types() {
+        let assets = assets_of::<SpellDef>();
+        let paths: Vec<&str> = assets.iter().map(|d| d.type_path.as_str()).collect();
+        assert!(paths.contains(&SpellDef::type_path()), "got {paths:?}");
+    }
+
+    #[test]
+    fn a_type_reached_only_through_a_field_carries_no_asset_mark() {
+        let assets = assets_of::<ItemDef>();
+        assert!(find(&assets, "ItemDef").asset);
+        assert!(!find(&assets, "Effect").asset);
+        assert!(!find(&assets, "Rarity").asset);
+    }
+
+    #[test]
+    fn a_registry_with_no_assets_reports_none() {
+        let mut registry = TypeRegistry::default();
+        registry.register::<ItemDef>();
+        assert!(extract_asset_types(&registry).is_empty());
+    }
+
+    /// A type holding more of itself, which the closure must walk once.
+    #[derive(Asset, Reflect, Default)]
+    #[type_path = "my_game::content"]
+    #[reflect(Default)]
+    struct SkillNode {
+        cost: u32,
+        unlocks: Vec<SkillNode>,
+    }
+
+    #[test]
+    fn a_type_holding_more_of_itself_is_described_once() {
+        let assets = assets_of::<SkillNode>();
+        let described: Vec<&str> = assets
+            .iter()
+            .map(|schema| schema.type_path.as_str())
+            .filter(|path| *path == SkillNode::type_path())
+            .collect();
+        assert_eq!(described.len(), 1, "got {assets:?}");
+    }
+
+    /// A type in the same crate as an asset root, which nothing the root
+    /// holds names.
+    #[derive(Reflect, Default)]
+    #[type_path = "my_game::content"]
+    #[reflect(Default)]
+    struct Unreachable {
+        idle: bool,
+    }
+
+    #[test]
+    fn a_type_the_roots_never_reach_is_left_out() {
+        let mut registry = TypeRegistry::default();
+        register_asset::<ItemDef>(&mut registry);
+        registry.register::<Unreachable>();
+        let assets = extract_asset_types(&registry);
+
+        let paths: Vec<&str> = assets
+            .iter()
+            .map(|schema| schema.type_path.as_str())
+            .collect();
+        assert!(paths.contains(&ItemDef::type_path()), "got {paths:?}");
+        assert!(
+            !paths.contains(&Unreachable::type_path()),
+            "sharing a crate with an asset root is not enough, got {paths:?}"
+        );
     }
 }

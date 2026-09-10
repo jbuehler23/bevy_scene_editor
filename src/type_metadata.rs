@@ -379,6 +379,7 @@ mod tests {
             description: "Rustdoc for the type.".into(),
             editor_description: "A checkpoint.".into(),
             hidden: false,
+            asset: false,
             preview: "models/flag.glb".into(),
             default_constructible: true,
             fields: Vec::new(),
@@ -398,6 +399,7 @@ mod tests {
                 resources: Vec::new(),
                 events: Vec::new(),
                 functions: Vec::new(),
+                assets: Vec::new(),
             },
             &std::collections::HashSet::new(),
         );

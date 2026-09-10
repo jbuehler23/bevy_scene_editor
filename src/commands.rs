@@ -1612,24 +1612,27 @@ pub(crate) fn json_field_edit_to_bsn_value(
 
 /// Convert a field edit on a project (schema-reported) component into the
 /// [`jackdaw_bsn::BsnValue`] to author, without an editor registration. The
-/// field's scalar variant is chosen from its schema type path.
+/// value is read as the field's schema type, so a type the editor does know --
+/// a colour, an asset path -- converts through its own registration, and the
+/// scalar variant is chosen from the type path only when nothing else fits.
 fn project_field_edit_to_bsn_value(
     world: &World,
     type_path: &str,
     field_path: &str,
     value: &serde_json::Value,
 ) -> Option<jackdaw_bsn::BsnValue> {
-    let schema = world
-        .get_resource::<crate::project_types::ProjectTypes>()?
-        .component(type_path)?;
+    let types = world.get_resource::<crate::project_types::ProjectTypes>()?;
+    let schema = types.component(type_path)?;
     let name = field_path.split('.').next().unwrap_or(field_path);
     let field = schema.fields.iter().find(|f| f.name == name)?;
-    Some(
-        crate::inspector::project_component_display::json_to_bsn_value_typed(
-            &field.type_path,
-            value,
-        ),
-    )
+    crate::schema_values::bsn_for_json(world, types, &field.type_path, value).or_else(|| {
+        Some(
+            crate::inspector::project_component_display::json_to_bsn_value_typed(
+                &field.type_path,
+                value,
+            ),
+        )
+    })
 }
 
 /// Author a flat field value on a project component's document patch without a
