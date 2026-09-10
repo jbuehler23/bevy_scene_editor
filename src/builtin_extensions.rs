@@ -359,6 +359,37 @@ impl JackdawExtension for TimelineExtension {
     }
 }
 
+/// The animation graph canvas in the bottom dock.
+#[derive(Default)]
+pub struct AnimationGraphExtension;
+
+impl JackdawExtension for AnimationGraphExtension {
+    fn id(&self) -> String {
+        crate::animation::GRAPH_WINDOW_ID.to_string()
+    }
+
+    fn label(&self) -> String {
+        "Animation Graph".to_string()
+    }
+
+    fn kind(&self) -> ExtensionKind {
+        ExtensionKind::Builtin
+    }
+
+    fn register(&self, ctx: &mut ExtensionContext) {
+        ctx.register_window(
+            WindowDescriptor::new(crate::animation::GRAPH_WINDOW_ID)
+                .with_name("Graph")
+                .with_icon(Icon::Workflow.unicode())
+                .with_default_area(DefaultArea::BottomDock)
+                .with_priority(2)
+                .with_build(|window| {
+                    window.spawn(crate::animation::animation_graph_window_content());
+                }),
+        );
+    }
+}
+
 /// Terminal placeholder in the bottom dock.
 #[derive(Default)]
 pub struct TerminalExtension;

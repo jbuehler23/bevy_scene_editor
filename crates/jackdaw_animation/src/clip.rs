@@ -180,13 +180,8 @@ impl AnimationTrack {
     }
 }
 
-// Keyframe components, one per value type. Named after the Bevy type
-// they hold, not the field they target. Adding a new value type is a
-// new component here plus a dispatch arm in compile.rs.
-// `compile.rs`.
-
-/// A keyframe that stores a [`Vec3`] value. Used for translation,
-/// scale, and future Vec3-valued animated fields.
+/// A keyframe holding a [`Vec3`], which is what translation and scale animate.
+/// A new value type is a component like this one plus an arm in `compile.rs`.
 #[derive(Component, Reflect, Serialize, Deserialize, Debug, Clone, Copy, Default)]
 #[reflect(Component, Serialize, Deserialize, @jackdaw_scene_types::EditorHidden)]
 pub struct Vec3Keyframe {
@@ -381,6 +376,44 @@ pub struct ImportedClipView {
     /// How many tracks the clip holds, which is what the group heading counts
     /// when the names cannot be read.
     pub curve_count: usize,
+    /// The entity holding this clip's events under the previewed entity, once
+    /// an author has put one there. `None` until the first event is added.
+    pub row: Option<Entity>,
+}
+
+/// How long an event marker stays lit after playback crosses it.
+const MARKER_LIT_SECONDS: f32 = 0.6;
+
+/// Event markers a preview has just crossed, and how long each stays lit.
+/// Not persisted.
+#[derive(Resource, Default, Debug)]
+pub struct FiredClipEvents {
+    lit: bevy::platform::collections::HashMap<Entity, f32>,
+}
+
+impl FiredClipEvents {
+    /// Light the marker standing for one event.
+    pub fn light(&mut self, event: Entity) {
+        self.lit.insert(event, MARKER_LIT_SECONDS);
+    }
+
+    /// Whether a marker is lit.
+    pub fn is_lit(&self, event: Entity) -> bool {
+        self.lit.contains_key(&event)
+    }
+
+    /// Age every lit marker, dropping the ones that have gone out.
+    pub fn fade(&mut self, delta: f32) {
+        self.lit.retain(|_, remaining| {
+            *remaining -= delta;
+            *remaining > 0.0
+        });
+    }
+
+    /// Whether anything is lit.
+    pub fn is_empty(&self) -> bool {
+        self.lit.is_empty()
+    }
 }
 
 /// Which keyframe the scrubber is snapped onto during a drag.
@@ -412,4 +445,23 @@ pub struct KeyframeClipboardEntry {
 #[derive(Resource, Default, Debug, Clone)]
 pub struct KeyframeClipboard {
     pub entries: Vec<KeyframeClipboardEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lit_marker_goes_out_once_its_time_is_up() {
+        let mut fired = FiredClipEvents::default();
+        let marker = Entity::from_raw_u32(1).expect("a valid id");
+        fired.light(marker);
+
+        fired.fade(MARKER_LIT_SECONDS * 0.5);
+        assert!(fired.is_lit(marker), "half its time is not all of it");
+
+        fired.fade(MARKER_LIT_SECONDS);
+        assert!(!fired.is_lit(marker));
+        assert!(fired.is_empty(), "and nothing is left to fade");
+    }
 }

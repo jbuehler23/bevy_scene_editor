@@ -112,6 +112,8 @@ pub struct ClipContents<'w, 's> {
     pub names: Query<'w, 's, &'static Name>,
     /// Parent links, for finding the entity a clip animates.
     pub parents: Query<'w, 's, &'static ChildOf>,
+    /// Child links, for reading the events on an imported clip's row.
+    pub children: Query<'w, 's, &'static Children>,
 }
 
 impl ClipContents<'_, '_> {
@@ -139,6 +141,25 @@ impl ClipContents<'_, '_> {
         } else {
             self.f32_keyframes.get(key).ok().map(|key| key.time)
         }
+    }
+
+    /// The events on one clip-event row, which is how an imported clip's markers
+    /// are drawn: they hang under a row of the entity, not under a clip.
+    pub fn keys_of_row(&self, row: Option<Entity>) -> Vec<RowKey> {
+        let mut keys: Vec<RowKey> = row
+            .and_then(|row| self.children.get(row).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(|child| {
+                self.events.get(*child).ok().map(|event| RowKey {
+                    entity: *child,
+                    time: event.time,
+                    name: Some(event.name.clone()),
+                })
+            })
+            .collect();
+        keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+        keys
     }
 
     /// The rows an authored clip draws: a summary, its events, then one group
@@ -176,9 +197,6 @@ impl ClipContents<'_, '_> {
         event_row.keys = events;
 
         let mut rows = vec![summary, event_row];
-        // Tracks address the clip's parent today, so one group covers them
-        // all. The heading is drawn anyway, because that is where a track on
-        // a descendant would hang once tracks can name one.
         if !tracks.is_empty() {
             rows.push(SheetRow::plain(
                 RowKind::Group,
@@ -597,8 +615,6 @@ pub fn spawn_sheet(
         Pickable::IGNORE,
         ChildOf(sheet),
         children![(
-            // The triangle head, drawn as a square turned onto a corner so it
-            // reads as a pointer without needing a mesh.
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(-4.0),
@@ -612,6 +628,12 @@ pub fn spawn_sheet(
             Pickable::IGNORE,
         )],
     ));
+}
+
+/// How many frames apart the minor ticks run, thinned so that a long clip does
+/// not draw one tick per pixel.
+fn minor_tick_stride(frames: f32) -> f32 {
+    (frames / 240.0).ceil().max(1.0)
 }
 
 /// The ruler: a label every whole tick, a minor tick every frame.
@@ -637,10 +659,8 @@ fn spawn_ruler(commands: &mut Commands, sheet: Entity, layout: SheetLayout) {
         return;
     }
 
-    // Minor ticks run at the snap rate, thinned out so a long clip does not
-    // draw a tick per pixel.
     let frames = (layout.duration * layout.rate).ceil().max(1.0);
-    let every = (frames / 240.0).ceil().max(1.0);
+    let every = minor_tick_stride(frames);
     let mut frame = 0.0_f32;
     while frame <= frames {
         let percent = (frame / frames).clamp(0.0, 1.0) * 100.0;
@@ -763,9 +783,8 @@ fn spawn_diamond(
     kind: &RowKind,
     layout: SheetLayout,
 ) {
-    // A summary diamond stands for a key on some other row, so it is drawn
-    // narrower: it is a place to look, not the handle you drag.
-    let size = if matches!(kind, RowKind::Summary) {
+    let stands_for_a_key_on_another_row = matches!(kind, RowKind::Summary);
+    let size = if stands_for_a_key_on_another_row {
         7.0
     } else {
         10.0
@@ -813,6 +832,7 @@ fn spawn_event_marker(
                 column_gap: Val::Px(tokens::SPACING_XS),
                 ..default()
             },
+            BackgroundColor(Color::NONE),
             Pickable::default(),
             ChildOf(strip),
         ))
@@ -882,8 +902,8 @@ fn spawn_curves(
         return;
     };
     let span = (high - low).max(f32::EPSILON);
-    // Height runs downwards, so a high value sits near the top.
-    let height_percent = |value: f32| (1.0 - (value - low) / span).clamp(0.0, 1.0) * 100.0;
+    let percent_down_from_the_top =
+        |value: f32| (1.0 - (value - low) / span).clamp(0.0, 1.0) * 100.0;
 
     for (axis, samples) in series {
         let color = axis_color(axis);
@@ -891,7 +911,7 @@ fn spawn_curves(
         for step in 0..=CURVE_SAMPLES {
             let time = layout.duration * step as f32 / CURVE_SAMPLES as f32;
             let value = sample_at(samples, time);
-            let at = height_percent(value);
+            let at = percent_down_from_the_top(value);
             if let Some(from) = previous {
                 let top = at.min(from);
                 let height = (at - from).abs().max(0.4);
@@ -918,7 +938,7 @@ fn spawn_curves(
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Percent(time_percent(*time, layout.duration)),
-                    top: Val::Percent(height_percent(*value)),
+                    top: Val::Percent(percent_down_from_the_top(*value)),
                     width: Val::Px(6.0),
                     height: Val::Px(6.0),
                     margin: UiRect::new(Val::Px(-3.0), Val::Px(0.0), Val::Px(-3.0), Val::Px(0.0)),

@@ -7,11 +7,14 @@
 #[path = "../util/mod.rs"]
 mod util;
 
+mod animation_graph;
 mod animation_library;
+mod animation_markers;
 mod animation_timeline;
 mod brush_ops;
 mod canvas_guides;
 mod canvas_snap;
+mod definition_assets;
 mod gltf_authoring;
 mod mesh_quick_menu;
 mod modeling_essentials;

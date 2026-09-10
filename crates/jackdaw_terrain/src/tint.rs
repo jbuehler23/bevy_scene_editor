@@ -81,7 +81,7 @@ pub fn apply_color_brush(
 
 /// Brush strength at `dist`, with a hard plateau out to `hardness` of the
 /// radius and [`crate::control`]'s falloff shape over the rest.
-fn brush_weight(dist: f32, radius: f32, falloff: f32, hardness: f32) -> f32 {
+pub(crate) fn brush_weight(dist: f32, radius: f32, falloff: f32, hardness: f32) -> f32 {
     if dist >= radius {
         return 0.0;
     }

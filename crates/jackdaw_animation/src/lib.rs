@@ -23,10 +23,10 @@ pub mod toolbar;
 
 pub use blend_graph::{AdditiveBlendNode, AnimationBlendGraph, BlendNode, ClipNodeRef, OutputNode};
 pub use clip::{
-    AnimationTrack, Clip, ClipRecording, F32Keyframe, GltfClipRef, ImportedClipView, Interpolation,
-    KeyframeClipboard, KeyframeClipboardEntry, KeyframeValue, LoopMode, OnionSkin, QuatKeyframe,
-    SelectedClip, SelectedKeyframes, SelectedTrack, TimelineSnap, TimelineSnapHint, TimelineView,
-    TimelineZoom, Vec3Keyframe,
+    AnimationTrack, Clip, ClipRecording, F32Keyframe, FiredClipEvents, GltfClipRef,
+    ImportedClipView, Interpolation, KeyframeClipboard, KeyframeClipboardEntry, KeyframeValue,
+    LoopMode, OnionSkin, QuatKeyframe, SelectedClip, SelectedKeyframes, SelectedTrack,
+    TimelineSnap, TimelineSnapHint, TimelineView, TimelineZoom, Vec3Keyframe,
 };
 pub use compile::{
     CompiledClip, clip_display_duration, compile_blend_graphs, compile_clips, max_keyframe_time,
@@ -47,8 +47,8 @@ pub use timeline::{
     TimelineCreateClipButton, TimelineDirty, TimelinePanelRoot, clear_snap_hint_on_drag_end,
     handle_scrubber_click, handle_scrubber_drag, handle_scrubber_drag_end,
     handle_scrubber_drag_start, mark_timeline_dirty_on_data_change, pick_tick_step,
-    rebuild_timeline, timeline_panel, update_key_readout, update_keyframe_highlight,
-    update_playhead_position,
+    rebuild_timeline, timeline_panel, update_event_marker_highlight, update_key_readout,
+    update_keyframe_highlight, update_playhead_position,
 };
 pub use toolbar::{
     TimelineClipSelector, TimelineDurationInput, TimelineFrameInput, TimelineLoopSegment,
@@ -75,6 +75,7 @@ impl Plugin for AnimationPlugin {
             .init_resource::<ClipRecording>()
             .init_resource::<OnionSkin>()
             .init_resource::<ImportedClipView>()
+            .init_resource::<FiredClipEvents>()
             .init_resource::<timeline::TimelineMarquee>()
             .init_resource::<timeline::KeyframeDragOrigin>()
             .init_resource::<ActiveClipBinding>()
@@ -130,6 +131,7 @@ impl Plugin for AnimationPlugin {
                     rebuild_timeline,
                     update_playhead_position,
                     update_keyframe_highlight,
+                    update_event_marker_highlight,
                     update_key_readout,
                     timeline::update_marquee_box,
                 )

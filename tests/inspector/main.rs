@@ -9,6 +9,7 @@ mod util;
 
 mod bindings_card;
 mod bindings_link;
+mod definition_card;
 mod inspector_panel_width;
 mod inspector_preview_guard;
 mod inspector_val;

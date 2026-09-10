@@ -32,6 +32,7 @@
 //! }
 //! ```
 
+pub mod definition_assets;
 pub mod entity_icons;
 pub mod extensions_config;
 pub mod inspector;
@@ -61,6 +62,7 @@ use operator::{CallOperatorSettings, Operator};
 use registries::WindowExtensionRegistry;
 use snapshot::{ActiveSnapshotter, SceneSnapshot};
 
+pub use definition_assets::{DefinitionAssetType, DefinitionAssetTypes};
 pub use entity_icons::EntityIconRegistry;
 pub use jackdaw_api_macros as macros;
 pub use jackdaw_api_macros::operator;
@@ -95,6 +97,7 @@ pub mod prelude {
     pub use crate::{
         ExtensionContext, ExtensionPoint, ExtensionRegistrar, JackdawExtension,
         MenuEntryDescriptor, PanelContext, WindowDescriptor,
+        definition_assets::{DefinitionAssetType, DefinitionAssetTypes},
         lifecycle::{
             ActiveModalQuery, Extension, ExtensionAppExt as _, ExtensionCatalog, ExtensionKind,
             RegisteredMenuEntry, RegisteredWindow,
@@ -263,6 +266,21 @@ impl<'a> ExtensionContext<'a> {
         self.world.spawn((
             lifecycle::RegisteredWidgetDefinition { id, registration },
             ChildOf(self.extension_entity),
+        ));
+        self
+    }
+
+    /// Register a definition asset type, a reflected asset the project keeps
+    /// one value per file. The registration goes when the extension unloads.
+    pub fn register_definition_asset(&mut self, definition: DefinitionAssetType) -> &mut Self {
+        let ext = self.extension_entity;
+        let kind = definition.kind.clone();
+        self.world
+            .resource_mut::<DefinitionAssetTypes>()
+            .register(definition);
+        self.world.spawn((
+            crate::definition_assets::RegisteredDefinitionAsset { kind },
+            ChildOf(ext),
         ));
         self
     }

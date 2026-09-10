@@ -23,15 +23,15 @@ use lucide_icons::Icon;
 
 use crate::blend_graph::AnimationBlendGraph;
 use crate::clip::{
-    AnimationTrack, Clip, ClipRecording, F32Keyframe, ImportedClipView, OnionSkin, QuatKeyframe,
-    SelectedClip, SelectedKeyframes, SelectedTrack, TimelineSnap, TimelineSnapHint, TimelineView,
-    TimelineZoom, Vec3Keyframe,
+    AnimationTrack, Clip, ClipRecording, F32Keyframe, FiredClipEvents, ImportedClipView, OnionSkin,
+    QuatKeyframe, SelectedClip, SelectedKeyframes, SelectedTrack, TimelineSnap, TimelineSnapHint,
+    TimelineView, TimelineZoom, Vec3Keyframe,
 };
 use crate::compile::clip_display_duration;
 use crate::player::{TimelineCursor, TimelineEngagement};
 use crate::sheet::{
-    ClipContents, RowKind, SheetLayout, SheetRow, TimelineKeyReadout, TimelineKeyframeHandle,
-    TimelinePlayheadIndicator, TimelineScrubber, TimelineSheetBody,
+    ClipContents, RowKind, SheetLayout, SheetRow, TimelineEventHandle, TimelineKeyReadout,
+    TimelineKeyframeHandle, TimelinePlayheadIndicator, TimelineScrubber, TimelineSheetBody,
 };
 use crate::toolbar::ToolbarState;
 
@@ -258,7 +258,14 @@ pub fn rebuild_timeline(
                 );
             }
             None if settings.imported.clip.is_some() => {
-                spawn_imported_clip(&mut commands, panel, &choices, &settings, &icon_font);
+                spawn_imported_clip(
+                    &mut commands,
+                    panel,
+                    &choices,
+                    &settings,
+                    &icon_font,
+                    &contents,
+                );
             }
             None => spawn_placeholder(&mut commands, panel),
         }
@@ -417,6 +424,7 @@ fn spawn_imported_clip(
     choices: &[(Entity, String)],
     settings: &TimelineSettings,
     icon_font: &IconFont,
+    contents: &ClipContents,
 ) {
     let imported = &*settings.imported;
     crate::toolbar::spawn_toolbar(
@@ -425,8 +433,11 @@ fn spawn_imported_clip(
         &toolbar_state(None, None, choices, settings, true),
         icon_font,
     );
+    let mut events = read_only_row(RowKind::Events, "Events".to_string(), 0);
+    events.keys = contents.keys_of_row(imported.row);
     let mut rows = vec![
         read_only_row(RowKind::Summary, imported.name.clone(), 0),
+        events,
         read_only_row(
             RowKind::Group,
             format!("Skeleton ({} tracks)", imported.curve_count),
@@ -618,6 +629,28 @@ pub fn update_keyframe_highlight(
         } else {
             bg.0 = tokens::ACCENT_BLUE;
             *border = BorderColor::all(Color::WHITE.with_alpha(0.4));
+        }
+    }
+}
+
+/// Light an event marker for a moment after playback crosses it, so an author
+/// scrubbing a clip can see which frame hit.
+pub fn update_event_marker_highlight(
+    time: Res<Time<Real>>,
+    mut fired: ResMut<FiredClipEvents>,
+    mut markers: Query<(&TimelineEventHandle, &mut BackgroundColor)>,
+) {
+    if !fired.is_empty() {
+        fired.fade(time.delta_secs());
+    }
+    for (marker, mut background) in &mut markers {
+        let wanted = if fired.is_lit(marker.event) {
+            tokens::TEXT_WARNING.with_alpha(0.35)
+        } else {
+            Color::NONE
+        };
+        if background.0 != wanted {
+            background.0 = wanted;
         }
     }
 }
@@ -973,9 +1006,8 @@ fn seek_for_pointer(
         clip_display_duration(clip_entity, clips)
     };
     let raw = time_for_cursor(logical_cursor_x, computed, global, duration);
-    // Shift holds snapping off for precise placement, as it does for the grid
-    // and the viewport elsewhere in the editor.
-    if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) || !snap.enabled {
+    let shift_holds_snapping_off = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    if shift_holds_snapping_off || !snap.enabled {
         return SnapResult {
             time: raw,
             hovered_keyframe: None,
@@ -1089,13 +1121,12 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_key_snaps_to_the_rate() {
+    fn a_time_just_off_a_frame_snaps_back_onto_it() {
         let snap = snap_at(30.0);
+        let ten_frames_at_thirty = 10.0 / 30.0;
 
-        // A third of a second is ten frames at thirty, and a time just off it
-        // has to land back on the frame rather than between two.
         assert!(
-            (snap.round(0.334) - 10.0 / 30.0).abs() < 1e-5,
+            (snap.round(0.334) - ten_frames_at_thirty).abs() < 1e-5,
             "{}",
             snap.round(0.334)
         );

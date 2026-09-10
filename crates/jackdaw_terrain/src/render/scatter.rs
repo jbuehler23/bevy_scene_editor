@@ -217,6 +217,16 @@ pub struct ScatterAssets {
 }
 
 impl ScatterAssets {
+    /// Start loading `asset` unless it is already known.
+    pub fn request(&mut self, server: &AssetServer, asset: &str) {
+        if self.entries.contains_key(asset) {
+            return;
+        }
+        let asset = asset.to_string();
+        let handle = server.load(asset.clone());
+        self.entries.insert(asset, ScatterAsset::Loading(handle));
+    }
+
     /// The primitives a palette entry draws, or `None` while it is loading
     /// or after it failed.
     pub fn primitives(&self, asset: &str) -> Option<&[ScatterPrimitive]> {
@@ -254,6 +264,9 @@ pub enum ScatterSystems {
     /// Resolving palette assets and respawning the chunks a dirty mark
     /// names. A host that writes [`TerrainScatter`] runs before this.
     Rebuild,
+    /// Flattening the glTFs that have finished loading, which both the
+    /// scatter and the detail renderers read the results of.
+    Resolve,
     /// Hiding the chunks no camera can see.
     Cull,
 }
@@ -264,7 +277,11 @@ fn init_asset_if_absent<A: Asset>(app: &mut App) {
     }
 }
 
-impl Plugin for ScatterRenderPlugin {
+/// The glTF store, shared by everything that draws a flattened asset. Added by
+/// [`ScatterRenderPlugin`] and [`super::detail::DetailRenderPlugin`] alike.
+pub struct ScatterAssetPlugin;
+
+impl Plugin for ScatterAssetPlugin {
     fn build(&self, app: &mut App) {
         // A headless build has no glTF loader to register these; a rendering
         // build already owns them, and registering again would replace the
@@ -274,14 +291,34 @@ impl Plugin for ScatterRenderPlugin {
         init_asset_if_absent::<GltfMesh>(app);
         init_asset_if_absent::<Mesh>(app);
         init_asset_if_absent::<StandardMaterial>(app);
-        app.init_resource::<ScatterAssets>().add_systems(
+        app.init_resource::<ScatterAssets>()
+            .configure_sets(
+                Update,
+                ScatterSystems::Resolve.in_set(ScatterSystems::Rebuild),
+            )
+            .add_systems(
+                Update,
+                resolve_palette_assets.in_set(ScatterSystems::Resolve),
+            );
+    }
+}
+
+/// Add the shared glTF store unless a sibling renderer already did.
+pub(super) fn add_asset_plugin(app: &mut App) {
+    if !app.is_plugin_added::<ScatterAssetPlugin>() {
+        app.add_plugins(ScatterAssetPlugin);
+    }
+}
+
+impl Plugin for ScatterRenderPlugin {
+    fn build(&self, app: &mut App) {
+        add_asset_plugin(app);
+        app.add_systems(
             Update,
             (
-                request_palette_assets,
-                resolve_palette_assets,
-                rebuild_chunks,
+                request_palette_assets.before(ScatterSystems::Resolve),
+                rebuild_chunks.after(ScatterSystems::Resolve),
             )
-                .chain()
                 .in_set(ScatterSystems::Rebuild),
         );
         // After the frusta are written and before they are read: culling against
@@ -305,13 +342,10 @@ fn request_palette_assets(
     let assets = assets.into_inner();
     for scatter in &terrains {
         for entry in &scatter.palette.assets {
-            if entry.is_tombstone() || assets.entries.contains_key(&entry.asset) {
+            if entry.is_tombstone() {
                 continue;
             }
-            assets.entries.insert(
-                entry.asset.clone(),
-                ScatterAsset::Loading(server.load(&entry.asset)),
-            );
+            assets.request(&server, &entry.asset);
         }
     }
 }

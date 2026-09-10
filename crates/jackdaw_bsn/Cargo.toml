@@ -27,6 +27,8 @@ smol_str = "0.2"
 # The round-trip test needs a real vocabulary of its own, not a synthetic
 # stand-in: `Bindings` is the list-of-enums shape the read path is weakest on.
 jackdaw_bind.workspace = true
+# A definition type's files are round-tripped through a real directory.
+tempfile = "3"
 
 [build-dependencies]
 lalrpop = "0.23"

@@ -552,6 +552,60 @@ mod tests {
         );
     }
 
+    /// One asset per file, named by its file stem, into a fresh world.
+    #[test]
+    fn a_directory_of_named_assets_round_trips_one_file_at_a_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut world = scalar_world();
+
+        let written = [("Shiny", 1.0, 0.05), ("Rough", 0.0, 0.9)];
+        for (name, metallic, roughness) in written {
+            let handle = world
+                .resource_mut::<Assets<TestMaterial>>()
+                .add(TestMaterial {
+                    metallic,
+                    roughness,
+                });
+            let text = serialize_assets_to_bsn(
+                &world,
+                &[CatalogAssetRef {
+                    name: name.to_string(),
+                    type_id: TypeId::of::<TestMaterial>(),
+                    asset_id: handle.id().untyped(),
+                }],
+            );
+            std::fs::write(dir.path().join(format!("{name}.material.bsn")), text)
+                .expect("the file is written");
+        }
+
+        let mut fresh = scalar_world();
+        let mut loaded: Vec<(String, f32)> = Vec::new();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir.path())
+            .expect("the directory is there")
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        files.sort();
+        for path in files {
+            let stem = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".material.bsn"))
+                .expect("a file of this suffix")
+                .to_string();
+            let text = std::fs::read_to_string(&path).expect("the file reads");
+            let entries = load_bsn_assets(&mut fresh, &text).expect("load should succeed");
+            assert_eq!(entries.len(), 1, "a definition file holds one asset");
+            assert_eq!(entries[0].name, stem, "the entry is named after its file");
+            loaded.push((stem, get_material(&fresh, &entries[0].handle).roughness));
+        }
+
+        assert_eq!(
+            loaded,
+            vec![("Rough".to_string(), 0.9), ("Shiny".to_string(), 0.05)]
+        );
+    }
+
     #[test]
     fn round_trips_scalar_catalog_by_name_and_value() {
         let mut world = scalar_world();

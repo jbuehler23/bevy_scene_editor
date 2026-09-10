@@ -18,9 +18,13 @@
 //! [`PaintDomain::Color`] is the tint layer the splat material multiplies its
 //! albedo by. It accumulates like the texture brush, and Ctrl paints white,
 //! the layer's identity and so its eraser.
+//!
+//! [`PaintDomain::Detail`] is the coverage channel one detail layer grows from.
+//! The brush eases cells toward its ceiling; Ctrl or Erase walks them to zero.
 
 use bevy::prelude::*;
 use jackdaw_api::prelude::*;
+use jackdaw_terrain::render::DetailDirty;
 use jackdaw_terrain::{Control, GridRect};
 
 use super::{
@@ -57,6 +61,7 @@ pub enum PaintDomain {
     Channels,
     Textures,
     Color,
+    Detail,
 }
 
 /// Which channel/value or texture/opacity the paint brush writes, and
@@ -109,6 +114,20 @@ pub struct TerrainPaintState {
     pub variation_frequency: f32,
     /// How far a channel travels from white in that wash, `0.0..=1.0`.
     pub variation_amount: f32,
+    /// Which detail layer the brush paints and the panel edits.
+    pub detail_layer: usize,
+    /// How far a cell crosses toward full detail cover per second at full brush
+    /// strength, `0.0..=1.0`, scaled by falloff and frame `dt`.
+    pub detail_opacity: f32,
+    /// Whether the detail brush thins cells out rather than thickening them.
+    /// Ctrl does the same for one stroke.
+    pub detail_erase: bool,
+    /// The ground a detail stroke has covered so far, marked for a reseed when
+    /// the stroke is released or abandoned.
+    pub stroke_detail_rect: Option<GridRect>,
+    /// The disc the previous frame of that stroke wrote, which the next
+    /// frame's mark is widened by.
+    pub detail_disc: Option<GridRect>,
     /// Whether the brush hands cells back to autoterrain instead of
     /// painting a texture into them. The paint bar's Restore Auto
     /// checkbox switches this.
@@ -143,6 +162,11 @@ impl Default for TerrainPaintState {
             variation_seed: 0,
             variation_frequency: 0.01,
             variation_amount: 0.15,
+            detail_layer: 0,
+            detail_opacity: 0.5,
+            detail_erase: false,
+            stroke_detail_rect: None,
+            detail_disc: None,
             restore_auto: false,
             stroke_restores: false,
         }
@@ -192,6 +216,22 @@ impl SetTerrainChannel {
         }
         if let Some(mut dirty) = world.get_mut::<TerrainDirtyChunks>(self.entity) {
             dirty.rebuild_all = true;
+        }
+        let channel_grows_detail = terrain.detail.iter().any(|layer| {
+            terrain
+                .channels
+                .iter()
+                .position(|channel| channel.name == layer.density_channel)
+                == Some(self.channel)
+        });
+        if channel_grows_detail {
+            let resolution = world
+                .resource::<TerrainDataStore>()
+                .grid_shape(&terrain)
+                .resolution;
+            if let Some(rect) = changed_rect(&self.old_values, &self.new_values, resolution) {
+                super::detail::mark_detail_dirty(world, self.entity, rect);
+            }
         }
     }
 }
@@ -567,7 +607,11 @@ pub fn terrain_paint(
     edit_mode: Res<TerrainEditMode>,
     brush_settings: Res<TerrainBrushSettings>,
     mut paint_state: ResMut<TerrainPaintState>,
-    mut terrain_query: Query<(&jackdaw_scene_types::Terrain, &mut TerrainDirtyChunks)>,
+    mut terrain_query: Query<(
+        &jackdaw_scene_types::Terrain,
+        &mut TerrainDirtyChunks,
+        Option<&mut DetailDirty>,
+    )>,
     mut store: ResMut<TerrainDataStore>,
     mut history: ResMut<CommandHistory>,
     time: Res<Time>,
@@ -580,7 +624,7 @@ pub fn terrain_paint(
 
     match paint_state.domain {
         PaintDomain::Channels => {
-            let (terrain, mut dirty) = terrain_query.get_mut(target)?;
+            let (terrain, mut dirty, _) = terrain_query.get_mut(target)?;
             let terrain = terrain.clone();
 
             let erase = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
@@ -652,7 +696,7 @@ pub fn terrain_paint(
             OperatorResult::Running
         }
         PaintDomain::Textures => {
-            let (terrain, _dirty) = terrain_query.get_mut(target)?;
+            let (terrain, _dirty, _) = terrain_query.get_mut(target)?;
             let terrain = terrain.clone();
             // The stroke lands on the cells the terrain holds, so the brush
             // reaches wherever ground has been allocated.
@@ -736,7 +780,7 @@ pub fn terrain_paint(
             OperatorResult::Running
         }
         PaintDomain::Color => {
-            let (terrain, _dirty) = terrain_query.get_mut(target)?;
+            let (terrain, _dirty, _) = terrain_query.get_mut(target)?;
             let terrain = terrain.clone();
             let resolution = store.grid_shape(&terrain).resolution;
             // Ctrl paints white, the layer's identity, so the eraser is
@@ -790,23 +834,115 @@ pub fn terrain_paint(
             }
             OperatorResult::Running
         }
+        PaintDomain::Detail => {
+            let (terrain, _dirty, detail_dirty) = terrain_query.get_mut(target)?;
+            let terrain = terrain.clone();
+            let index = super::detail::selected_detail_layer(&terrain, paint_state.detail_layer)?;
+            let layer = terrain.detail[index].clone();
+            let erase = paint_state.detail_erase
+                || keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+
+            let mut data = store.entry_for(&terrain)?;
+            let channel_index = data
+                .channels()
+                .iter()
+                .position(|channel| channel.name == layer.density_channel)?;
+            let element = data.channel_mut(channel_index)?.element;
+            let resolution = data.document().grid_resolution();
+            let mut values = data.channel_values(channel_index);
+
+            if !active.is_modal_running() {
+                paint_state.active = true;
+                paint_state.stroke_channel = channel_index;
+                paint_state.stroke_snapshot = values.clone();
+                paint_state.stroke_detail_rect = None;
+                paint_state.detail_disc = None;
+            }
+
+            if super::stroke_should_end(&mouse) {
+                paint_state.active = false;
+                paint_state.detail_disc = None;
+                if let Some(rect) = paint_state.stroke_detail_rect.take()
+                    && let Some(mut detail_dirty) = detail_dirty
+                {
+                    detail_dirty.touch(rect);
+                }
+                let old_values = std::mem::take(&mut paint_state.stroke_snapshot);
+                if old_values != values {
+                    history.push_executed(Box::new(SetTerrainChannel {
+                        entity: target,
+                        channel: channel_index,
+                        old_values,
+                        new_values: values.clone(),
+                        label: "Paint Detail".to_string(),
+                    }));
+                }
+                return OperatorResult::Finished;
+            }
+
+            if let Some(grid_pos) = paint_state.brush_position
+                && let Some(rect) = GridRect::brush(resolution, grid_pos, brush_settings.radius)
+            {
+                let changed = jackdaw_terrain::apply_density_brush(
+                    &mut values,
+                    resolution,
+                    element,
+                    grid_pos,
+                    brush_settings.radius,
+                    DETAIL_HARDNESS,
+                    brush_settings.falloff,
+                    paint_state.detail_opacity,
+                    time.delta_secs(),
+                    erase,
+                );
+                if changed > 0 {
+                    data.set_channel_values(channel_index, &values);
+                    paint_state.stroke_detail_rect = Some(match paint_state.stroke_detail_rect {
+                        Some(grown) => grown.union(rect),
+                        None => rect,
+                    });
+                    let this_disc_and_the_last = match paint_state.detail_disc.replace(rect) {
+                        Some(last) => last.union(rect),
+                        None => rect,
+                    };
+                    if let Some(mut detail_dirty) = detail_dirty {
+                        detail_dirty.touch(this_disc_and_the_last);
+                    }
+                }
+            }
+            OperatorResult::Running
+        }
     }
 }
+
+/// Fraction of the detail brush held at full strength before the falloff starts.
+const DETAIL_HARDNESS: f32 = 0.5;
 
 /// Falloff a cell must clear to be written. Integer channels cannot blend,
 /// so the brush edge needs a hard cutoff; half-strength matches the visible
 /// ring's half-intensity contour.
 const PAINT_THRESHOLD: f32 = 0.5;
 
+/// End a stroke that was abandoned, marking the ground it grew so that the
+/// detail standing on those cells is reseeded.
 fn cancel_terrain_paint(
     mut paint_state: ResMut<TerrainPaintState>,
     mut terrain_query: Query<(&jackdaw_scene_types::Terrain, &mut TerrainDirtyChunks)>,
+    mut detail_dirty: Query<&mut DetailDirty>,
     mut store: ResMut<TerrainDataStore>,
 ) {
     if !paint_state.active {
         return;
     }
     paint_state.active = false;
+    paint_state.detail_disc = None;
+
+    if let Some(rect) = paint_state.stroke_detail_rect.take()
+        && let Some(target) = paint_state.target
+        && let Ok(mut dirty) = detail_dirty.get_mut(target)
+    {
+        dirty.touch(rect);
+    }
 
     if paint_state.domain == PaintDomain::Color {
         let snapshot = std::mem::take(&mut paint_state.stroke_color_snapshot);

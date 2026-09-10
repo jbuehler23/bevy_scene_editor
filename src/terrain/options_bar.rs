@@ -94,6 +94,11 @@ struct RestoreAutoCheckbox;
 #[derive(Component)]
 struct NavmeshOverlayCheckbox;
 
+/// Tags the Detail bar's erase checkbox, same reasoning as
+/// [`QuantizationToggleCheckbox`].
+#[derive(Component)]
+struct DetailEraseCheckbox;
+
 /// Builds the options bar as a `bsn!` Scene. Starts empty and hidden
 /// (`Display::None`); content is rebuilt by `update_options_bar_content` from
 /// the active [`TerrainEditMode`].
@@ -153,6 +158,8 @@ enum TextureField {
     VariationSeed,
     VariationFrequency,
     VariationAmount,
+    /// How fast a detail stroke thickens the cells under it.
+    DetailOpacity,
 }
 
 /// Tags the Navmesh bar's agent chips. They describe the character a bake is
@@ -222,6 +229,11 @@ struct TextureBarSignature {
     /// Whether the brush is restoring rather than painting, so the bar rebuilds
     /// when an undo or a scripted call flips it.
     restore_auto: bool,
+    /// The same for the detail brush's erase checkbox.
+    detail_erase: bool,
+    /// Which detail layer the bar is naming, so it rebuilds when the selection
+    /// moves to another one.
+    detail_layer: usize,
 }
 
 fn update_options_bar_content(
@@ -275,6 +287,8 @@ fn update_options_bar_content(
             })
             .unwrap_or(0),
         restore_auto: paint_state.restore_auto,
+        detail_erase: paint_state.detail_erase,
+        detail_layer: paint_state.detail_layer,
     });
 
     let region_signature = (*edit_mode == TerrainEditMode::Regions).then(|| RegionBarSignature {
@@ -363,6 +377,15 @@ fn update_options_bar_content(
                     }
                     PaintDomain::Color => {
                         spawn_color_paint_bar(&mut commands, bar, &brush_settings, &paint_state);
+                    }
+                    PaintDomain::Detail => {
+                        spawn_detail_paint_bar(
+                            &mut commands,
+                            bar,
+                            &brush_settings,
+                            &paint_state,
+                            terrain.as_ref(),
+                        );
                     }
                 }
             }
@@ -500,6 +523,7 @@ fn spawn_paint_target_picker(commands: &mut Commands, parent: Entity, domain: Pa
         PaintDomain::Channels => 0,
         PaintDomain::Textures => 1,
         PaintDomain::Color => 2,
+        PaintDomain::Detail => 3,
     };
     commands
         .spawn((
@@ -508,6 +532,7 @@ fn spawn_paint_target_picker(commands: &mut Commands, parent: Entity, domain: Pa
                     "Scatter Masks".to_string(),
                     "Textures".to_string(),
                     "Color".to_string(),
+                    "Detail".to_string(),
                 ],
                 selected,
             ),
@@ -517,6 +542,7 @@ fn spawn_paint_target_picker(commands: &mut Commands, parent: Entity, domain: Pa
             let target = match event.selected {
                 1 => "textures",
                 2 => "color",
+                3 => "detail",
                 _ => "channels",
             };
             commands
@@ -658,6 +684,67 @@ fn spawn_color_paint_bar(
         ),
         ChildOf(parent),
     ));
+}
+
+/// The Detail-mode bar: which layer the brush is loaded with, the brush's
+/// shape, how fast it thickens a cell, and whether it is thinning cells out.
+fn spawn_detail_paint_bar(
+    commands: &mut Commands,
+    parent: Entity,
+    brush: &TerrainBrushSettings,
+    paint: &TerrainPaintState,
+    terrain: Option<&jackdaw_scene_types::Terrain>,
+) {
+    let Some(layer) = terrain.and_then(|terrain| {
+        let index = super::detail::selected_detail_layer(terrain, paint.detail_layer)?;
+        terrain.detail.get(index)
+    }) else {
+        spawn_hint(
+            commands,
+            parent,
+            "This terrain has no detail layer selected. Add one in the Terrain panel's \
+             Detail tab.",
+        );
+        return;
+    };
+    spawn_hint(commands, parent, &format!("Layer: {}", layer.name));
+    spawn_scrub_chip(
+        commands,
+        parent,
+        "Radius",
+        "Area of effect for the brush",
+        brush.radius,
+        0.1..50.0,
+        FieldKind::Continuous,
+        BrushField::Radius,
+    );
+    spawn_scrub_chip(
+        commands,
+        parent,
+        "Falloff",
+        "Brush edge softness (1=linear, 2=smooth)",
+        brush.falloff,
+        0.1..8.0,
+        FieldKind::Continuous,
+        BrushField::Falloff,
+    );
+    spawn_scrub_chip(
+        commands,
+        parent,
+        "Opacity",
+        "How far a cell crosses toward full cover per second at full brush strength",
+        paint.detail_opacity,
+        0.01..1.0,
+        FieldKind::Continuous,
+        TextureField::DetailOpacity,
+    );
+    spawn_checkbox(
+        commands,
+        parent,
+        "Erase",
+        paint.detail_erase,
+        DetailEraseCheckbox,
+    );
 }
 
 /// The Texture-mode bar: brush radius and falloff, opacity, which texture is
@@ -1080,6 +1167,9 @@ fn on_scrub_value_change(
             TextureField::VariationAmount => {
                 paint_state.variation_amount = event.value.clamp(0.0, 1.0);
             }
+            TextureField::DetailOpacity => {
+                paint_state.detail_opacity = event.value.clamp(0.01, 1.0);
+            }
         }
         return;
     }
@@ -1130,6 +1220,7 @@ fn on_terrain_checkbox_value_change(
     show_painted_values: Query<(), With<ShowPaintedValuesCheckbox>>,
     region_grid: Query<(), With<RegionGridCheckbox>>,
     restore_auto: Query<(), With<RestoreAutoCheckbox>>,
+    detail_erase: Query<(), With<DetailEraseCheckbox>>,
     navmesh_overlay: Query<(), With<NavmeshOverlayCheckbox>>,
     mut commands: Commands,
 ) {
@@ -1142,6 +1233,8 @@ fn on_terrain_checkbox_value_change(
         crate::terrain::regions::TerrainRegionToggleGridOp::ID
     } else if restore_auto.contains(target) {
         crate::terrain::texture_ops::TerrainPaintRestoreOp::ID
+    } else if detail_erase.contains(target) {
+        crate::terrain::detail_ops::TerrainDetailPaintOp::ID
     } else if navmesh_overlay.contains(target) {
         crate::terrain::navmesh_bake::TerrainNavmeshToggleOverlayOp::ID
     } else {
@@ -1220,6 +1313,7 @@ fn sync_texture_opacity_field(
                 TextureField::VariationSeed => paint_state.variation_seed as f32,
                 TextureField::VariationFrequency => paint_state.variation_frequency,
                 TextureField::VariationAmount => paint_state.variation_amount,
+                TextureField::DetailOpacity => paint_state.detail_opacity,
             };
             (entity, value)
         })
@@ -1277,6 +1371,8 @@ mod tests {
                 base_material: None,
                 thumbnails_ready: 0,
                 restore_auto: false,
+                detail_erase: false,
+                detail_layer: 0,
             }),
             region_signature: None,
             navmesh_signature: None,

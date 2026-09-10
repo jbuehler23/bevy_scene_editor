@@ -233,6 +233,7 @@ fn run_sculpt_stamp(world: &mut World, params: &OperatorParameters) {
             dirty.dirty.insert(chunk);
         }
     }
+    super::detail::mark_detail_dirty(world, target, rect);
     world
         .resource_mut::<CommandHistory>()
         .push_executed(Box::new(SetTerrainHeights::stroke(

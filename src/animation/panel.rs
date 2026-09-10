@@ -35,6 +35,7 @@ pub enum AnimationPanelTab {
     #[default]
     Library,
     Timeline,
+    Graph,
 }
 
 /// What the Library tab is looking at.
@@ -46,6 +47,9 @@ pub struct AnimationPanelState {
     pub clip: Option<String>,
     /// What the filter field holds.
     pub filter: String,
+    /// What the Graph tab's name field holds, which is what a new graph is
+    /// called when the operator is dispatched without a name.
+    pub graph_name: String,
 }
 
 /// Marker for the panel's tab-strip container.
@@ -87,6 +91,14 @@ fn demand_project_walk(
 #[derive(Component)]
 struct LibraryClipList;
 
+/// Marker on the Graph tab's new-graph name field.
+#[derive(Component)]
+struct AnimationGraphNameField;
+
+/// Marker on the scrolling column of graph files.
+#[derive(Component)]
+struct AnimationGraphList;
+
 /// Marker on everything this panel's systems spawn into the window.
 ///
 /// The dock rebuilds a window's content wholesale, which can take away a
@@ -111,22 +123,32 @@ const NOTHING_PREVIEWING: &str = "nothing is previewing";
     params(tab(
         String,
         default = "library",
-        doc = "Which tab to show: \"library\" or \"timeline\"."
+        doc = "Which tab to show: \"library\", \"timeline\" or \"graph\"."
     ),),
     allows_undo = false
 )]
 pub(crate) fn animation_panel_tab(
     params: In<OperatorParameters>,
     mut tab: ResMut<AnimationPanelTab>,
+    mut commands: Commands,
 ) -> OperatorResult {
     *tab = match params.as_str("tab").unwrap_or("library") {
         "timeline" => AnimationPanelTab::Timeline,
         "library" => AnimationPanelTab::Library,
+        "graph" => AnimationPanelTab::Graph,
         other => {
             warn!("animation.panel.tab: no tab is called \"{other}\", showing the library");
             AnimationPanelTab::Library
         }
     };
+    if *tab == AnimationPanelTab::Graph {
+        commands.queue(|world: &mut World| {
+            crate::open_window_in_default_area_if_absent(
+                world,
+                super::graph_window::GRAPH_WINDOW_ID,
+            );
+        });
+    }
     OperatorResult::Finished
 }
 
@@ -294,6 +316,7 @@ fn update_animation_panel_tabs(
             [
                 TabStripItem::new("Library", *tab == AnimationPanelTab::Library, "library"),
                 TabStripItem::new("Timeline", *tab == AnimationPanelTab::Timeline, "timeline"),
+                TabStripItem::new("Graph", *tab == AnimationPanelTab::Graph, "graph"),
             ],
         );
         commands.entity(row).insert(AnimationPanelPart);
@@ -333,6 +356,9 @@ fn update_animation_panel_body(
             }
             AnimationPanelTab::Library => {
                 spawn_library_tab(&mut commands, body, &state, &icon_font);
+            }
+            AnimationPanelTab::Graph => {
+                spawn_graph_tab(&mut commands, body, &state);
             }
         }
     }
@@ -714,6 +740,128 @@ fn spawn_file_row(
     ));
 }
 
+/// The Graph tab: the graphs the project holds, and a field to name a new one.
+///
+/// The canvas itself lives in its own dock window, which the tab opens; this
+/// list is what says which graph that window shows.
+fn spawn_graph_tab(commands: &mut Commands, body: Entity, state: &AnimationPanelState) {
+    let toolbar = commands
+        .spawn((
+            AnimationPanelPart,
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(tokens::SPACING_SM),
+                padding: UiRect::all(px(tokens::SPACING_SM)),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            ChildOf(body),
+        ))
+        .id();
+    commands.spawn((
+        AnimationGraphNameField,
+        text_edit(
+            TextEditProps::default()
+                .with_placeholder("New graph name...")
+                .with_default_value(state.graph_name.clone())
+                .allow_empty(),
+        ),
+        ChildOf(toolbar),
+    ));
+    commands.spawn((
+        button(
+            ButtonProps::new("New graph")
+                .with_variant(ButtonVariant::Default)
+                .with_left_icon(Icon::Plus),
+        ),
+        ButtonOperatorCall::new(crate::animation::graph_ops::AnimationGraphNewOp::ID),
+        ChildOf(toolbar),
+    ));
+    commands.spawn((
+        AnimationGraphList,
+        Node {
+            flex_grow: 1.0,
+            min_height: px(0),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::scroll_y(),
+            padding: UiRect::horizontal(px(tokens::SPACING_SM)),
+            row_gap: px(tokens::SPACING_XS),
+            ..default()
+        },
+        ScrollPosition::default(),
+        ChildOf(body),
+    ));
+}
+
+/// Refill the list of graph files the project holds.
+///
+/// The directory is read when the tab is built and when the open graph
+/// changes, rather than every frame: nothing else in the editor writes these
+/// files behind the panel's back.
+fn update_graph_list(
+    mut commands: Commands,
+    doc: Res<crate::animation::graph_doc::AnimationGraphDoc>,
+    project: Option<Res<crate::project::ProjectRoot>>,
+    lists: Query<(Entity, Option<&Children>), With<AnimationGraphList>>,
+    mut last: Local<Option<String>>,
+) {
+    if lists.is_empty() {
+        *last = None;
+        return;
+    }
+    let open = doc.path.clone().unwrap_or_default();
+    if last.as_ref() == Some(&open) && all_filled(&lists) {
+        return;
+    }
+    *last = Some(open.clone());
+
+    let files = project
+        .map(|project| crate::animation::graph_doc::graph_files_in(&project))
+        .unwrap_or_default();
+    for (list, children) in &lists {
+        despawn_children(&mut commands, children);
+        if files.is_empty() {
+            spawn_hint(
+                &mut commands,
+                list,
+                "No graph in this project yet. Name one and press New graph.",
+            );
+            continue;
+        }
+        for path in &files {
+            commands.spawn((
+                AnimationPanelPart,
+                button(
+                    ButtonProps::new(path.clone())
+                        .with_variant(if *path == open {
+                            ButtonVariant::Active
+                        } else {
+                            ButtonVariant::Ghost
+                        })
+                        .with_size(ButtonSize::MD)
+                        .align_left(),
+                ),
+                ButtonOperatorCall::new(crate::animation::graph_ops::AnimationGraphOpenOp::ID)
+                    .with_param("path", path.clone()),
+                ChildOf(list),
+            ));
+        }
+    }
+}
+
+/// Read the new-graph name field into the state the operator falls back on.
+fn update_graph_name_field(
+    mut state: ResMut<AnimationPanelState>,
+    fields: Query<&TextEditValue, (With<AnimationGraphNameField>, Changed<TextEditValue>)>,
+) {
+    for field in &fields {
+        if state.graph_name != field.0 {
+            state.graph_name = field.0.clone();
+        }
+    }
+}
+
 /// Keep the transport's bar in step with the clip without redrawing the tab.
 fn update_preview_progress(
     preview: Res<AnimationPreview>,
@@ -778,11 +926,13 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (
                 update_library_filter,
+                update_graph_name_field,
                 update_animation_panel_tabs,
                 update_animation_panel_body,
                 demand_project_walk,
                 update_library_files,
                 update_library_clips,
+                update_graph_list,
                 update_preview_progress,
                 update_preview_target_label,
                 drop_orphaned_panel_parts,

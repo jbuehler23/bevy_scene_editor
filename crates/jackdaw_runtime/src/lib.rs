@@ -83,9 +83,9 @@ use jackdaw_bsn::{
 };
 
 pub use jackdaw_scene_types::{
-    Brush, BrushFaceData, CustomProperties, EditorCategory, EditorDescription, EditorHidden,
-    EditorPreview, GltfSource, NAVMESH_EXCLUDE_TYPE_PATH, NavmeshExclude, PropertyValue,
-    ScatterGroup, ScatterInstance, SkipSerialization,
+    Brush, BrushFaceData, CustomProperties, DetailPresser, EditorCategory, EditorDescription,
+    EditorHidden, EditorPreview, GltfSource, NAVMESH_EXCLUDE_TYPE_PATH, NavmeshExclude,
+    PropertyValue, ScatterGroup, ScatterInstance, SkipSerialization,
 };
 
 #[cfg(feature = "pie")]
@@ -99,6 +99,8 @@ pub use pie_windowless::{maybe_windowless, windowless_requested};
 
 #[cfg(feature = "terrain")]
 mod terrain;
+#[cfg(feature = "terrain")]
+pub use jackdaw_terrain::render::{DetailPressers, DetailSettings};
 #[cfg(feature = "terrain")]
 pub use terrain::TerrainViewer;
 
@@ -116,13 +118,13 @@ pub use schema_cli::{
 pub mod prelude {
     #[cfg(feature = "navmesh")]
     pub use crate::JackdawNavmesh;
-    #[cfg(feature = "terrain")]
-    pub use crate::TerrainViewer;
     pub use crate::{
-        EditorCategory, EditorDescription, EditorHidden, EditorPreview, JackdawCatalog,
-        JackdawCatalogPath, JackdawPlugin, JackdawSceneMember, JackdawSceneRoot, SceneRefused,
-        SkipSerialization,
+        DetailPresser, EditorCategory, EditorDescription, EditorHidden, EditorPreview,
+        JackdawCatalog, JackdawCatalogPath, JackdawPlugin, JackdawSceneMember, JackdawSceneRoot,
+        SceneRefused, SkipSerialization,
     };
+    #[cfg(feature = "terrain")]
+    pub use crate::{DetailPressers, DetailSettings, TerrainViewer};
 }
 
 pub struct JackdawPlugin;

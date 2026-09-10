@@ -21,9 +21,10 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use jackdaw_scene_types::Terrain;
 use jackdaw_terrain::render::{
-    ScatterDirty, ScatterRenderPlugin, ScatterSystems, SplatArrayHandles, SplatBuildError,
-    TerrainRenderPlugin, TerrainScatter, TerrainSplatMaterial, TextureSetImages,
-    control_image_from_bytes, resolve_with, slope_image, splat_images, tint_image,
+    DetailDirty, DetailRenderPlugin, DetailSystems, ScatterDirty, ScatterRenderPlugin,
+    ScatterSystems, SplatArrayHandles, SplatBuildError, TerrainDetailSource, TerrainRenderPlugin,
+    TerrainScatter, TerrainSplatMaterial, TextureSetImages, control_image_from_bytes, resolve_with,
+    slope_image, splat_images, tint_image,
 };
 use jackdaw_terrain::sidecar::{self, TerrainMaterialSlot};
 use jackdaw_terrain::splat::ControlTexels;
@@ -42,8 +43,10 @@ use avian3d::prelude::{Collider, RigidBody};
 /// would upload as linear 0.214 and draw more than twice as dark.
 const UNTEXTURED: Color = Color::linear_rgb(0.5, 0.5, 0.5);
 
+/// Loads terrain sidecars and keeps ground surfaces in step with them, writing
+/// the scatter and detail projections before their renderers rebuild.
 pub(crate) fn plugin(app: &mut App) {
-    app.add_plugins((TerrainRenderPlugin, ScatterRenderPlugin))
+    app.add_plugins((TerrainRenderPlugin, ScatterRenderPlugin, DetailRenderPlugin))
         .add_systems(
             Update,
             (
@@ -55,10 +58,8 @@ pub(crate) fn plugin(app: &mut App) {
             )
                 .chain()
                 .after(crate::spawn_loaded_scenes)
-                // The scatter a sidecar carries is written here and drawn
-                // by the rebuild, so it is written before the rebuild
-                // reads it rather than a frame behind it.
-                .before(ScatterSystems::Rebuild),
+                .before(ScatterSystems::Rebuild)
+                .before(DetailSystems::Rebuild),
         );
     #[cfg(feature = "physics")]
     app.add_systems(Update, build_ground_colliders.after(refresh_heightmaps));
@@ -208,6 +209,11 @@ fn load_sidecars(
             None => RegionTerrainData::default(),
         };
 
+        if let Some(detail) = TerrainDetailSource::from_document(&data, terrain) {
+            commands
+                .entity(entity)
+                .insert((detail, DetailDirty::default()));
+        }
         commands.entity(entity).insert((
             TerrainScatter::from_document(&data),
             ScatterDirty::all(),

@@ -157,6 +157,9 @@ pub(crate) fn field_edit_preview(
     field_path: &str,
     value: &serde_json::Value,
 ) {
+    if crate::definition_assets::preview_definition_field(world, type_path, field_path, value) {
+        return;
+    }
     field_edit_begin(world, type_path, field_path);
     let targets = field_edit_session_targets(world);
     for target in targets {
@@ -176,6 +179,9 @@ pub(crate) fn field_edit_commit(
     new_json: &serde_json::Value,
     group_label: &str,
 ) {
+    if crate::definition_assets::commit_definition_field(world, type_path, field_path, new_json) {
+        return;
+    }
     // Immediate commits (no prior preview) still need a derived baseline.
     field_edit_begin(world, type_path, field_path);
     let mut targets = field_edit_session_targets(world);

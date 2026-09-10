@@ -29,6 +29,7 @@ pub mod component_json;
 pub mod creation_taxonomy;
 pub mod custom_properties;
 pub mod default_style;
+pub mod definition_assets;
 pub mod draw_brush;
 pub mod edit_mode_ops;
 pub mod entity_ops;
@@ -461,6 +462,7 @@ impl Plugin for EditorCorePlugin {
             remote::debug::RemoteDebugPlugin,
             camera_settings::plugin,
         ))
+        .add_plugins(definition_assets::plugin)
         .add_plugins(model_thumbnail::plugin)
         .add_plugins(boot_ops::plugin)
         .add_plugins(fps_overlay::plugin)
@@ -647,6 +649,7 @@ impl Plugin for ExtensionPlugin {
                 .register_extension::<builtin_extensions::AssetBrowserExtension>()
                 .register_extension::<builtin_extensions::GamePanelExtension>()
                 .register_extension::<builtin_extensions::TimelineExtension>()
+                .register_extension::<builtin_extensions::AnimationGraphExtension>()
                 .register_extension::<builtin_extensions::TerminalExtension>()
                 .register_extension::<build_panel::BuildPanelExtension>()
                 .register_extension::<builtin_extensions::InspectorExtension>()

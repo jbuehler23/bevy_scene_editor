@@ -476,13 +476,22 @@ impl SceneGeometry<'_, '_> {
     fn candidates(&self) -> impl Iterator<Item = (Entity, Affine3A, &Mesh3d)> + '_ {
         self.meshes
             .iter()
-            .filter(|(entity, _, _, body, sensor)| {
+            .filter(|(entity, _, handle, body, sensor)| {
                 // A body that moves is not ground, and nothing stands on a
                 // trigger volume. A collider with no body is static, like an
                 // unsimulated scene mesh.
-                !moves(*body) && sensor.is_none() && !self.hidden(*entity)
+                !moves(*body) && sensor.is_none() && !self.hidden(*entity) && self.readable(handle)
             })
             .map(|(entity, transform, handle, _, _)| (entity, transform.affine(), handle))
+    }
+
+    /// Whether this mesh can be read here: one extracted to the render world
+    /// panics on its attributes, and an unloaded handle counts as readable.
+    fn readable(&self, handle: &Mesh3d) -> bool {
+        self.assets.get(handle).is_none_or(|mesh| {
+            mesh.asset_usage
+                .contains(bevy::asset::RenderAssetUsages::MAIN_WORLD)
+        })
     }
 
     /// Every mesh that belongs in the bake, with where it stands.
@@ -3193,6 +3202,29 @@ mod tests {
             .run_system_cached(|geometry: SceneGeometry| geometry.placements().count())
             .expect("the geometry gather runs");
         assert_eq!(count, 0);
+    }
+
+    /// A mesh the render world owns cannot be read on the main world, and
+    /// reading its attributes there panics.
+    #[test]
+    fn a_render_only_mesh_is_left_out_of_the_staleness_hash() {
+        let dir = std::env::temp_dir().join(format!("jd_render_only_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a place to write the artifact");
+        let mut world = world_with_terrain(&dir);
+        let mut built = Mesh::from(Cuboid::new(2.0, 2.0, 2.0));
+        built.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(built);
+        world.spawn((
+            Mesh3d(mesh),
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
+        world.flush();
+
+        let hashes = world
+            .run_system_cached(|geometry: SceneGeometry| geometry_hashes(geometry.placements()))
+            .expect("the geometry gather runs");
+        assert!(hashes.is_empty(), "the hash skips a mesh it cannot read");
     }
 
     #[test]

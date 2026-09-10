@@ -38,10 +38,10 @@ use jackdaw_dylib;
 // --- Extension authoring surface ---
 
 pub use jackdaw_api_internal::{
-    DefaultArea, ExtensionContext, ExtensionInputContext, ExtensionPoint, ExtensionRegistrar,
-    HierarchyWindow, InspectorWindow, JackdawExtension, MenuEntryDescriptor, PanelContext,
-    ToAnchorId as _, TopLevelMenu, WidgetDefinition, WidgetInstantiateContext, WidgetRegistry,
-    WindowDescriptor,
+    DefaultArea, DefinitionAssetType, DefinitionAssetTypes, ExtensionContext,
+    ExtensionInputContext, ExtensionPoint, ExtensionRegistrar, HierarchyWindow, InspectorWindow,
+    JackdawExtension, MenuEntryDescriptor, PanelContext, ToAnchorId as _, TopLevelMenu,
+    WidgetDefinition, WidgetInstantiateContext, WidgetRegistry, WindowDescriptor,
 };
 
 pub use jackdaw_api_internal::lifecycle::ExtensionKind;
@@ -177,10 +177,10 @@ pub mod prelude {
     pub use crate::pie::PlayState;
     pub use crate::runtime::{GameApp, GamePlugin, GameRegistered, GameRegistry, GameSystems};
     pub use crate::{
-        DefaultArea, ExtensionContext, ExtensionInputContext, ExtensionKind, ExtensionPoint,
-        ExtensionRegistrar, HierarchyWindow, InspectorWindow, JackdawExtension,
-        MenuEntryDescriptor, PanelContext, TopLevelMenu, WidgetDefinition,
-        WidgetInstantiateContext, WidgetRegistry, WindowDescriptor, operator,
+        DefaultArea, DefinitionAssetType, DefinitionAssetTypes, ExtensionContext,
+        ExtensionInputContext, ExtensionKind, ExtensionPoint, ExtensionRegistrar, HierarchyWindow,
+        InspectorWindow, JackdawExtension, MenuEntryDescriptor, PanelContext, TopLevelMenu,
+        WidgetDefinition, WidgetInstantiateContext, WidgetRegistry, WindowDescriptor, operator,
     };
 
     /// Helper [`SystemParam`](bevy::ecs::system::SystemParam) for

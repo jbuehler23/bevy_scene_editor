@@ -257,6 +257,7 @@ impl JackdawExtension for JackdawCoreExtension {
         crate::hierarchy::add_to_extension(ctx);
         crate::file_ops::add_to_extension(ctx);
         crate::material_assets::add_to_extension(ctx);
+        crate::definition_assets::add_to_extension(ctx);
         crate::viewport_select::add_to_extension(ctx);
         crate::clip_ops::add_to_extension(ctx);
         crate::brush_element_ops::add_to_extension(ctx);
@@ -313,6 +314,7 @@ impl JackdawExtension for JackdawCoreExtension {
         crate::animation::add_to_extension(ctx);
         crate::terrain::texture_ops::add_to_extension(ctx);
         crate::terrain::tint_ops::add_to_extension(ctx);
+        crate::terrain::detail_ops::add_to_extension(ctx);
         crate::terrain::autoterrain_ops::add_to_extension(ctx);
         crate::asset_browser::add_to_extension(ctx);
         crate::material_browser::add_to_extension(ctx);
