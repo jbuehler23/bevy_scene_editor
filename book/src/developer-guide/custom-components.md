@@ -66,6 +66,40 @@ designers), use `@EditorDescription`:
 pub struct PlayerSpawn;
 ```
 
+## Asset types
+
+A type your game registers as a reflected asset is a kind the
+editor can create and edit, one value per file:
+
+```rust
+use bevy::prelude::*;
+
+#[derive(Asset, Reflect, Default)]
+#[reflect(Default)]
+pub struct ItemDef {
+    pub stack_size: u32,
+}
+
+app.init_asset::<ItemDef>().register_asset_reflect::<ItemDef>();
+```
+
+Nothing is declared anywhere else. The schema the build extracts
+reports the type, the editor names the kind after it (`ItemDef`
+gives `item`, `Item` on menus), and right-clicking a folder in the
+asset browser offers **New Item**. The file is a plain `.bsn`
+whose second line names the type it holds:
+
+```text
+// jackdaw 0.19.0 | bevy 0.19
+// jackdaw asset my_game::content::ItemDef
+#torch
+my_game::content::ItemDef { stack_size: 4 }
+```
+
+The header is how the browser reads what a file is cheaply; the
+document's own root is the truth, so a file written before headers
+existed still opens. A file can live in any folder.
+
 ## Viewport previews for markers
 
 Tag a type with `@EditorPreview` and a gltf path under `assets/` 

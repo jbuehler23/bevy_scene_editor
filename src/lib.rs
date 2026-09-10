@@ -13,6 +13,7 @@ pub mod animation;
 pub mod app_ops;
 pub mod asset_browser;
 pub mod asset_catalog;
+pub mod asset_files;
 pub mod asset_ingest;
 pub mod authored_widgets;
 pub mod boot_ops;
@@ -104,6 +105,7 @@ pub mod preview_context;
 pub(crate) mod preview_model;
 pub mod project;
 pub mod project_build;
+pub mod project_definitions;
 pub mod project_files;
 pub mod project_select;
 pub mod project_settings;
@@ -120,6 +122,7 @@ pub mod scene_io;
 pub mod scene_ops;
 pub mod scenes;
 pub mod schema_preview;
+pub mod schema_values;
 pub mod screenshot;
 pub mod scrolling_log;
 pub mod sdk_paths;
@@ -133,6 +136,7 @@ pub(crate) mod timestamps;
 pub mod tool_ops;
 pub mod transform_ops;
 pub mod type_metadata;
+pub mod typed_values;
 pub mod ui_align;
 pub mod ui_asset_drop;
 pub mod ui_grouping;
@@ -550,7 +554,13 @@ impl Plugin for EditorCorePlugin {
             )
                 .chain(),
         )
-        .add_systems(OnEnter(AppState::Editor), run_config::read_run_configs)
+        .add_systems(
+            OnEnter(AppState::Editor),
+            (
+                run_config::read_run_configs,
+                project_definitions::register_project_definitions,
+            ),
+        )
         // Outside the editor state, since the launcher opens and closes
         // projects too.
         .add_systems(First, project::mirror_open_project)
@@ -2755,6 +2765,11 @@ fn cleanup_editor(world: &mut World) {
     world.insert_resource(asset_catalog::AssetCatalog::default());
     world.insert_resource(material_assets::SavedMaterials::default());
     world.insert_resource(material_assets::MaterialRegistry::default());
+    project_definitions::forget_project_definitions(world);
+    world.insert_resource(asset_files::AssetKindCache::default());
+    world.insert_resource(definition_assets::DefinitionRegistry::default());
+    world.insert_resource(definition_assets::DefinitionValues::default());
+    world.insert_resource(definition_assets::OpenDefinition::default());
 
     // 6. Remove project root
     world.remove_resource::<project::ProjectRoot>();

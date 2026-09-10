@@ -1,0 +1,115 @@
+{
+  "components": [],
+  "resources": [],
+  "events": [],
+  "functions": [],
+  "assets": [
+    {
+      "type_path": "definition_project::content::ItemDef",
+      "short_name": "ItemDef",
+      "module_path": "definition_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [
+        {
+          "name": "stack_size",
+          "type_path": "u32",
+          "item_type_path": ""
+        },
+        {
+          "name": "rarity",
+          "type_path": "definition_project::content::Rarity",
+          "item_type_path": ""
+        },
+        {
+          "name": "loot",
+          "type_path": "alloc::vec::Vec<definition_project::content::LootRoll>",
+          "item_type_path": "definition_project::content::LootRoll"
+        }
+      ],
+      "kind": "Struct",
+      "default": {
+        "definition_project::content::ItemDef": {
+          "stack_size": 1,
+          "rarity": "Common",
+          "loot": []
+        }
+      },
+      "variants": [],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": true
+    },
+    {
+      "type_path": "definition_project::content::LootRoll",
+      "short_name": "LootRoll",
+      "module_path": "definition_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [
+        {
+          "name": "item",
+          "type_path": "alloc::string::String",
+          "item_type_path": ""
+        },
+        {
+          "name": "weight",
+          "type_path": "u32",
+          "item_type_path": ""
+        }
+      ],
+      "kind": "Struct",
+      "default": {
+        "definition_project::content::LootRoll": {
+          "item": "",
+          "weight": 1
+        }
+      },
+      "variants": [],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": false
+    },
+    {
+      "type_path": "definition_project::content::Rarity",
+      "short_name": "Rarity",
+      "module_path": "definition_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [],
+      "kind": "Enum",
+      "default": {
+        "definition_project::content::Rarity": "Common"
+      },
+      "variants": [
+        {
+          "name": "Common",
+          "fields": []
+        },
+        {
+          "name": "Rare",
+          "fields": []
+        },
+        {
+          "name": "Epic",
+          "fields": []
+        }
+      ],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": false
+    }
+  ]
+}

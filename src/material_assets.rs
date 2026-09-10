@@ -205,17 +205,12 @@ pub fn write_material_file(
         .get_resource::<ProjectRoot>()
         .ok_or_else(|| std::io::Error::other("no project root"))?;
     let path = material_file_path(project, name);
-    let text = material_to_bsn(world, name, handle.id().untyped());
-    // Skip an identical rewrite: the asset watcher reloads on mtime, and a material apply
-    // can flag the catalog dirty many times over.
-    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == text) {
-        return Ok(path);
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    crate::scene_io::save::write_atomic(&path, text.as_bytes())?;
-    Ok(path)
+    crate::definition_assets::write_definition_file(
+        world,
+        &sanitize_material_name(name),
+        &crate::definition_assets::DefinitionValue::Asset(handle.clone().untyped()),
+        &path,
+    )
 }
 
 /// Delete the file backing a material name, if there is one.

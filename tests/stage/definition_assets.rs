@@ -6,10 +6,12 @@
 
 use crate::util;
 
-use bevy::asset::{Asset, Assets, UntypedHandle};
+use std::path::PathBuf;
+
+use bevy::asset::{Asset, Assets};
 use bevy::prelude::*;
 use jackdaw::definition_assets::{
-    DefinitionAssetEdit, DefinitionRegistry, MATERIAL_KIND, OpenDefinition,
+    DefinitionAssetEdit, DefinitionRegistry, DefinitionValue, MATERIAL_KIND, OpenDefinition,
 };
 use jackdaw_api::prelude::*;
 use jackdaw_api_internal::operator::{CallOperatorSettings, ExecutionContext};
@@ -39,14 +41,18 @@ struct ItemDef {
     loot: Vec<LootRoll>,
 }
 
-fn item_type() -> DefinitionAssetType {
-    DefinitionAssetType::new(
-        "item",
-        "Item",
-        ItemDef::type_path(),
-        "content/items",
-        ".item.bsn",
-    )
+fn item_type() -> AssetKind {
+    AssetKind::extension("item", "Item", ItemDef::type_path())
+}
+
+fn items_dir(tmp: &tempfile::TempDir) -> PathBuf {
+    let dir = tmp.path().join("assets/content/items");
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    dir
+}
+
+fn item_path(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
+    jackdaw::definition_assets::definition_file_path(&items_dir(tmp), name)
 }
 
 /// An editor with a project of its own and one definition type registered.
@@ -64,7 +70,7 @@ fn editor_with_items() -> (App, tempfile::TempDir) {
             config: default(),
         });
     app.world_mut()
-        .resource_mut::<DefinitionAssetTypes>()
+        .resource_mut::<AssetKinds>()
         .register(item_type());
     app.world_mut()
         .resource_mut::<NextState<jackdaw::AppState>>()
@@ -93,19 +99,20 @@ fn open_item(app: &App) -> ItemDef {
         .resource::<OpenDefinition>()
         .0
         .expect("a definition is open");
-    let handle = app
+    let value = app
         .world()
         .get::<DefinitionAssetEdit>(entity)
         .expect("the entity is editing a definition")
-        .handle
+        .value
         .clone();
-    item_of(app, &handle)
+    item_of(app, &value)
 }
 
-fn item_of(app: &App, handle: &UntypedHandle) -> ItemDef {
+fn item_of(app: &App, value: &DefinitionValue) -> ItemDef {
+    let handle = value.handle().expect("a compiled definition").clone();
     app.world()
         .resource::<Assets<ItemDef>>()
-        .get(&handle.clone().typed::<ItemDef>())
+        .get(&handle.typed::<ItemDef>())
         .expect("the definition is in its store")
         .clone()
 }
@@ -114,12 +121,19 @@ fn item_of(app: &App, handle: &UntypedHandle) -> ItemDef {
 fn a_definition_is_created_edited_and_saved_through_its_operators() {
     let (mut app, tmp) = editor_with_items();
 
+    let path = item_path(&tmp, "torch");
     call(
         &mut app,
         "asset.new",
-        &[("type", "item".into()), ("name", "torch".into())],
+        &[
+            ("type", "item".into()),
+            ("name", "torch".into()),
+            (
+                "path",
+                items_dir(&tmp).to_string_lossy().into_owned().into(),
+            ),
+        ],
     );
-    let path = tmp.path().join("assets/content/items/torch.item.bsn");
     assert!(path.is_file(), "asset.new writes the file at {path:?}");
 
     call(
@@ -164,14 +178,14 @@ fn a_definition_is_created_edited_and_saved_through_its_operators() {
     let scan = jackdaw::definition_assets::rescan_definitions(app.world_mut());
     assert_eq!(scan.added, vec![("item".to_string(), "torch".to_string())]);
     let reloaded = {
-        let handle = app
+        let value = app
             .world()
             .resource::<DefinitionRegistry>()
             .get("item", "torch")
             .expect("the scan found it")
-            .handle
+            .value
             .clone();
-        item_of(&app, &handle)
+        item_of(&app, &value)
     };
     assert_eq!(reloaded.stack_size, 12);
     assert_eq!(reloaded.rarity, Rarity::Rare);
@@ -218,12 +232,12 @@ fn undo_reaches_the_definition_after_its_card_is_closed() {
         "asset.set",
         &[("field", "stack_size".into()), ("value", "12".into())],
     );
-    let handle = app
+    let value = app
         .world()
         .resource::<DefinitionRegistry>()
         .get("item", "torch")
         .expect("the definition is registered")
-        .handle
+        .value
         .clone();
 
     jackdaw::definition_assets::close_open_definition(app.world_mut());
@@ -236,9 +250,9 @@ fn undo_reaches_the_definition_after_its_card_is_closed() {
         });
 
     assert_eq!(
-        item_of(&app, &handle).stack_size,
+        item_of(&app, &value).stack_size,
         0,
-        "the entry is keyed by handle, so it outlives the card"
+        "the entry is keyed by the value, so it outlives the card"
     );
 }
 
@@ -291,14 +305,12 @@ fn a_definition_saves_back_to_the_file_it_was_opened_from() {
         .add(ItemDef::default());
     let flat = jackdaw::definition_assets::write_definition_file(
         app.world(),
-        &item_type(),
         "sword",
-        &handle.untyped(),
+        &DefinitionValue::Asset(handle.untyped()),
+        &item_path(&tmp, "sword"),
     )
     .expect("the file is written");
-    let nested = tmp
-        .path()
-        .join("assets/content/items/weapons/sword.item.bsn");
+    let nested = tmp.path().join("assets/content/items/weapons/sword.bsn");
     std::fs::create_dir_all(nested.parent().expect("a parent")).expect("the directory is made");
     std::fs::rename(&flat, &nested).expect("the file moves into its subdirectory");
 
@@ -325,12 +337,19 @@ fn a_definition_saves_back_to_the_file_it_was_opened_from() {
 #[test]
 fn deleting_a_definition_closes_its_card_and_drops_the_entry() {
     let (mut app, tmp) = editor_with_items();
+    let path = item_path(&tmp, "torch");
     call(
         &mut app,
         "asset.new",
-        &[("type", "item".into()), ("name", "torch".into())],
+        &[
+            ("type", "item".into()),
+            ("name", "torch".into()),
+            (
+                "path",
+                items_dir(&tmp).to_string_lossy().into_owned().into(),
+            ),
+        ],
     );
-    let path = tmp.path().join("assets/content/items/torch.item.bsn");
 
     call(
         &mut app,
@@ -351,7 +370,7 @@ fn deleting_a_definition_closes_its_card_and_drops_the_entry() {
 #[test]
 fn creating_a_definition_refuses_a_name_whose_file_is_already_there() {
     let (mut app, tmp) = editor_with_items();
-    let path = tmp.path().join("assets/content/items/torch.item.bsn");
+    let path = item_path(&tmp, "torch");
     std::fs::create_dir_all(path.parent().expect("a parent")).expect("the directory is made");
     std::fs::write(&path, "#torch ItemDef(stack_size: 7)\n").expect("the file is written");
 
@@ -379,7 +398,7 @@ fn unregistering_a_definition_type_drops_its_entries_and_closes_the_card() {
     assert!(app.world().resource::<OpenDefinition>().0.is_some());
 
     app.world_mut()
-        .resource_mut::<DefinitionAssetTypes>()
+        .resource_mut::<AssetKinds>()
         .unregister("item");
     app.update();
 
@@ -419,17 +438,31 @@ fn a_material_file_is_not_deleted_through_the_definition_operator() {
 }
 
 #[test]
-fn a_definition_file_reports_its_registered_kind() {
-    let (app, _tmp) = editor_with_items();
-    let types = app.world().resource::<DefinitionAssetTypes>();
-    let matched = types
-        .for_file(std::path::Path::new("assets/content/items/torch.item.bsn"))
-        .expect("a registered type claims the file");
-    assert_eq!(matched.kind, "item");
+fn a_definition_file_reports_the_kind_its_type_belongs_to() {
+    let (mut app, tmp) = editor_with_items();
+    let handle = app
+        .world_mut()
+        .resource_mut::<Assets<ItemDef>>()
+        .add(ItemDef::default());
+    let path = item_path(&tmp, "torch");
+    jackdaw::definition_assets::write_definition_file(
+        app.world(),
+        "torch",
+        &DefinitionValue::Asset(handle.untyped()),
+        &path,
+    )
+    .expect("the file is written");
+    let scene = tmp.path().join("assets/scenes/level.bsn");
+    std::fs::create_dir_all(scene.parent().expect("a parent")).expect("the directory is made");
+    std::fs::write(&scene, "#Cube\njackdaw_scene_types::types::Brush { }\n")
+        .expect("the scene is written");
+
+    assert_eq!(
+        jackdaw::definition_assets::kind_of_file(app.world(), &path).map(|kind| kind.kind),
+        Some("item".to_string())
+    );
     assert!(
-        types
-            .for_file(std::path::Path::new("assets/scenes/level.bsn"))
-            .is_none(),
+        jackdaw::definition_assets::kind_of_file(app.world(), &scene).is_none(),
         "a plain scene is still a scene"
     );
 }
@@ -557,5 +590,124 @@ fn a_material_is_opened_and_its_fields_set_through_the_definition_operators() {
     assert!(
         written.contains("perceptual_roughness: 0.25"),
         "got:\n{written}"
+    );
+}
+
+/// A texture slot names its image by path, which is the one spelling a caller
+/// with no handle in hand can give it.
+#[test]
+fn asset_set_fills_a_texture_slot_from_a_path_and_the_save_keeps_it() {
+    let (mut app, tmp) = editor_with_items();
+    let handle = app
+        .world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial::default());
+    jackdaw::material_assets::write_material_file(app.world(), "slate", &handle)
+        .expect("the material file is written");
+    app.world_mut()
+        .resource_mut::<jackdaw::material_assets::MaterialRegistry>()
+        .add_saved("slate".to_string(), handle.clone());
+    app.world_mut()
+        .insert_resource(jackdaw::material_preview::MaterialPreviewState {
+            active_material: Some(handle.clone()),
+            ..default()
+        });
+    app.update();
+
+    call(
+        &mut app,
+        "asset.open",
+        &[("path", "assets/materials/slate.material.bsn".into())],
+    );
+    call(
+        &mut app,
+        "asset.set",
+        &[
+            ("field", "base_color_texture".into()),
+            ("value", "textures/slate_base.png".into()),
+        ],
+    );
+    call(&mut app, "material.save", &[("material", "slate".into())]);
+    app.update();
+
+    let texture = app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&handle)
+        .expect("the material the scene is using")
+        .base_color_texture
+        .clone()
+        .expect("the slot holds an image");
+    assert_eq!(
+        app.world()
+            .resource::<AssetServer>()
+            .get_path(texture.id())
+            .map(|path| path.to_string()),
+        Some("textures/slate_base.png".to_string()),
+        "the slot names the image the caller asked for, whether or not it is there yet"
+    );
+    let written = std::fs::read_to_string(tmp.path().join("assets/materials/slate.material.bsn"))
+        .expect("the file reads");
+    assert!(
+        written.contains("textures/slate_base.png"),
+        "got:\n{written}"
+    );
+}
+
+/// A colour is written the way a person says one, and undo puts back what the
+/// field held.
+#[test]
+fn asset_set_takes_a_colour_as_channels_and_undo_puts_the_old_one_back() {
+    let (mut app, _tmp) = editor_with_items();
+    let handle = app
+        .world_mut()
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial::default());
+    jackdaw::material_assets::write_material_file(app.world(), "slate", &handle)
+        .expect("the material file is written");
+    app.world_mut()
+        .resource_mut::<jackdaw::material_assets::MaterialRegistry>()
+        .add_saved("slate".to_string(), handle.clone());
+    app.update();
+
+    call(
+        &mut app,
+        "asset.open",
+        &[("path", "assets/materials/slate.material.bsn".into())],
+    );
+    call(
+        &mut app,
+        "asset.set",
+        &[
+            ("field", "base_color".into()),
+            ("value", "0.25,0.5,1".into()),
+        ],
+    );
+
+    let base_color = |app: &App| {
+        app.world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&handle)
+            .expect("the material the scene is using")
+            .base_color
+            .to_linear()
+    };
+    let set = base_color(&app);
+    let asked = Color::srgb(0.25, 0.5, 1.0).to_linear();
+    assert!(
+        (set.red - asked.red).abs() < 1e-5
+            && (set.green - asked.green).abs() < 1e-5
+            && (set.blue - asked.blue).abs() < 1e-5,
+        "got {set:?}"
+    );
+
+    app.world_mut()
+        .resource_scope(|world, mut history: Mut<CommandHistory>| {
+            history.undo(world);
+        });
+    let back = base_color(&app);
+    assert!(
+        (back.red - 1.0).abs() < 1e-5 && (back.green - 1.0).abs() < 1e-5,
+        "undo puts the colour it had back, got {back:?}"
     );
 }

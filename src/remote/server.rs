@@ -1042,21 +1042,36 @@ pub fn assets_handler(
     if let Some(mut demand) = world.get_resource_mut::<crate::animation::LibraryDemand>() {
         demand.requested = true;
     }
-    let definition_types = world.get_resource::<jackdaw_api::prelude::DefinitionAssetTypes>();
-    let library = world.get_resource::<crate::animation::AnimationLibrary>();
-    let detailed: Vec<Value> = found
-        .into_iter()
-        .map(|path| {
-            let clips: Vec<&str> = library
-                .and_then(|library| library.file(&path))
-                .map(|file| file.clips.iter().map(|clip| clip.name.as_str()).collect())
-                .unwrap_or_default();
-            let kind = definition_types
-                .and_then(|types| types.for_file(Path::new(&path)))
-                .map_or_else(|| asset_kind(&path).to_string(), |known| known.kind.clone());
-            json!({ "path": path, "kind": kind, "clips": clips })
-        })
-        .collect();
+    world.get_resource_or_init::<crate::asset_files::AssetKindCache>();
+    let detailed: Vec<Value> = world.resource_scope(
+        |world, mut cache: Mut<crate::asset_files::AssetKindCache>| {
+            let asset_kinds = world.get_resource::<jackdaw_api::prelude::AssetKinds>();
+            let assets_dir = world
+                .get_resource::<crate::project::ProjectRoot>()
+                .map(crate::project::ProjectRoot::assets_dir);
+            let library = world.get_resource::<crate::animation::AnimationLibrary>();
+            found
+                .into_iter()
+                .map(|path| {
+                    let clips: Vec<&str> = library
+                        .and_then(|library| library.file(&path))
+                        .map(|file| file.clips.iter().map(|clip| clip.name.as_str()).collect())
+                        .unwrap_or_default();
+                    let kind = asset_kinds
+                        .zip(assets_dir.as_ref())
+                        .and_then(|(kinds, assets)| {
+                            cache
+                                .check(&assets.join(&path), kinds)
+                                .type_path()
+                                .and_then(|type_path| kinds.by_type_path(type_path))
+                                .map(|known| known.kind.clone())
+                        })
+                        .unwrap_or_else(|| asset_kind(&path).to_string());
+                    json!({ "path": path, "kind": kind, "clips": clips })
+                })
+                .collect()
+        },
+    );
     Ok(Some(json!({ "assets": detailed })))
 }
 

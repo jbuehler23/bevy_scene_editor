@@ -17,6 +17,7 @@
 use bevy::app::{App, AppExit, PreStartup};
 use bevy::ecs::reflect::{AppFunctionRegistry, AppTypeRegistry};
 use bevy::ecs::world::World;
+use bevy::reflect::TypeRegistry;
 use jackdaw_schema::ProjectSchema;
 
 pub use jackdaw_schema::SCHEMA_FLAG;
@@ -26,11 +27,29 @@ pub fn schema_extraction_requested() -> bool {
     std::env::args().any(|arg| arg == SCHEMA_FLAG)
 }
 
+/// Everything one type registry can say: the component, resource and event
+/// buckets, plus the types the game registers as assets.
+///
+/// Only a registry an `App` filled carries `ReflectAsset`, so the link-time
+/// inventory answers this with an empty asset bucket.
+fn schema_of(registry: &TypeRegistry) -> ProjectSchema {
+    let mut schema = jackdaw_schema::extract_from_registry(registry);
+    schema.assets = jackdaw_schema::extract_asset_types(registry);
+    schema
+}
+
+/// The link-time inventory as a registry, for the paths with no `App` to read.
+fn derived_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    registry.register_derived_types();
+    registry
+}
+
 /// This binary's reflected types, read from the link-time inventory alone, as
 /// the JSON wire format the editor reads. No `App` is involved, so this cannot
 /// see registered functions.
 pub fn extract_schema_json() -> Result<String, serde_json::Error> {
-    let schema = jackdaw_schema::extract_derived_schema();
+    let schema = schema_of(&derived_registry());
     serde_json::to_string(&schema)
 }
 
@@ -41,8 +60,8 @@ pub fn extract_schema_json() -> Result<String, serde_json::Error> {
 /// to the inventory if the world has no type registry.
 pub fn extract_schema_from_world(world: &World) -> ProjectSchema {
     let mut schema = match world.get_resource::<AppTypeRegistry>() {
-        Some(registry) => jackdaw_schema::extract_from_registry(&registry.read()),
-        None => jackdaw_schema::extract_derived_schema(),
+        Some(registry) => schema_of(&registry.read()),
+        None => schema_of(&derived_registry()),
     };
     if let Some(functions) = world.get_resource::<AppFunctionRegistry>() {
         schema.functions = jackdaw_schema::extract_functions(&functions.read());

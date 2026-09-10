@@ -241,7 +241,10 @@ fn write_prefab_doc(
     }
     let mut out = crate::prefab::resolver_bsn::clone_scene(prefab);
     jackdaw_prefab::relativize_isa_sources(&mut out, path.parent().unwrap_or(Path::new("")));
-    let text = emit_scene(&out);
+    let text = crate::asset_files::asset_file_text(
+        crate::prefab::resolver_bsn::PREFAB_TYPE,
+        &emit_scene(&out),
+    );
     let written = if replace {
         std::fs::write(&path, text)
     } else {
@@ -1830,7 +1833,10 @@ pub fn save_prefab_to_disk(world: &mut World, prefab_path: &Path) -> std::io::Re
             &mut out,
             write_path.parent().unwrap_or(Path::new("")),
         );
-        emit_scene(&out)
+        crate::asset_files::asset_file_text(
+            crate::prefab::resolver_bsn::PREFAB_TYPE,
+            &emit_scene(&out),
+        )
     };
     if write_path != prefab_path {
         back_up_legacy_prefab(prefab_path);

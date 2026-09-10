@@ -9,7 +9,7 @@ use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use bevy::reflect::ReflectFromReflect;
 use jackdaw_api::op::Operator as _;
-use jackdaw_api::prelude::DefinitionAssetTypes;
+use jackdaw_api::prelude::AssetKinds;
 use jackdaw_feathers::{
     button::{ButtonOperatorCall, ButtonProps, ButtonSize, ButtonVariant, button},
     icons::{EditorFont, IconFont},
@@ -20,6 +20,14 @@ use jackdaw_widgets::collapsible::CollapsibleHeader;
 use crate::definition_assets::{AssetSaveOp, DefinitionAssetEdit};
 
 use super::component_display::{ComponentDisplaySpec, spawn_component_display};
+use super::schema_fields::{SchemaFieldContext, spawn_schema_fields};
+
+/// What a definition card puts in its body: a reflected value the editor can
+/// walk, or a value it has only the project's schema for.
+enum CardBody {
+    Reflected(Box<dyn Reflect>),
+    Schema(Box<jackdaw_schema::TypeSchema>, serde_json::Value),
+}
 
 /// Build the card for the definition `source` is editing under `inspector`.
 pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source: Entity) {
@@ -35,57 +43,105 @@ pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source:
     else {
         return;
     };
-    let label = world
-        .get_resource::<DefinitionAssetTypes>()
+    let registered = world
+        .get_resource::<AssetKinds>()
         .and_then(|types| types.by_kind(&kind))
+        .cloned();
+    let label = registered
+        .as_ref()
         .map_or_else(|| kind.clone(), |definition| definition.label.clone());
-
-    let Some(value) = definition_snapshot(world, source, &type_path) else {
-        return;
+    let schema_backed = registered.is_some_and(|definition| definition.schema_backed());
+    let body = if schema_backed {
+        let (Some(schema), Some(value)) = (
+            crate::definition_assets::definition_schema(world, &kind),
+            crate::definition_assets::schema_definition_json(world, &kind, &name),
+        ) else {
+            return;
+        };
+        CardBody::Schema(Box::new(schema), value)
+    } else {
+        match definition_snapshot(world, source, &type_path) {
+            Some(value) => CardBody::Reflected(value),
+            None => return,
+        }
     };
 
     let registry = world.resource::<AppTypeRegistry>().clone();
+    let server = world.get_resource::<AssetServer>().cloned();
     let icon_font = world.resource::<IconFont>().0.clone();
     let editor_font = world.resource::<EditorFont>().0.clone();
     let collapse_state =
         super::InspectorCollapseState(world.resource::<super::InspectorCollapseState>().0.clone());
 
     let card_name = format!("{name} ({label})");
-    let mut state: SystemState<(Commands, Query<&Name>)> = SystemState::new(world);
-    let Ok((mut commands, names)) = state.get_mut(world) else {
-        return;
+    let card = {
+        let mut state: SystemState<Commands> = SystemState::new(world);
+        let Ok(mut commands) = state.get_mut(world) else {
+            return;
+        };
+        let card = spawn_component_display(
+            &mut commands,
+            ComponentDisplaySpec {
+                name: &card_name,
+                type_path: &type_path,
+                entity: source,
+                component: None,
+                is_overridden: false,
+                is_derived: false,
+                prefab_ctx: None,
+                revert_through_prefab: false,
+                icon_font: &icon_font,
+                editor_font: &editor_font,
+                collapse_state: &collapse_state,
+            },
+        );
+        jackdaw_feathers::utils::attach_or_despawn(&mut commands, inspector, card.section);
+        state.apply(world);
+        card
     };
-    let card = spawn_component_display(
-        &mut commands,
-        ComponentDisplaySpec {
-            name: &card_name,
-            type_path: &type_path,
-            entity: source,
-            component: None,
-            is_overridden: false,
-            is_derived: false,
-            prefab_ctx: None,
-            revert_through_prefab: false,
-            icon_font: &icon_font,
-            editor_font: &editor_font,
-            collapse_state: &collapse_state,
-        },
-    );
-    jackdaw_feathers::utils::attach_or_despawn(&mut commands, inspector, card.section);
-    super::reflect_fields::spawn_reflected_fields(
-        &mut commands,
-        card.body,
-        value.as_ref(),
-        0,
-        String::new(),
-        source,
-        &type_path,
-        &names,
-        &registry,
-        &editor_font,
-        &icon_font,
-    );
-    state.apply(world);
+
+    match body {
+        CardBody::Reflected(value) => {
+            let mut state: SystemState<(Commands, Query<&Name>)> = SystemState::new(world);
+            let Ok((mut commands, names)) = state.get_mut(world) else {
+                return;
+            };
+            super::reflect_fields::spawn_reflected_fields(
+                &mut commands,
+                card.body,
+                value.as_ref(),
+                0,
+                String::new(),
+                source,
+                &type_path,
+                &names,
+                &registry,
+                &editor_font,
+                &icon_font,
+            );
+            state.apply(world);
+        }
+        CardBody::Schema(schema, value) => {
+            world.resource_scope(|world, types: Mut<crate::project_types::ProjectTypes>| {
+                let mut state: SystemState<(Commands, Query<&Name>)> = SystemState::new(world);
+                let Ok((mut commands, names)) = state.get_mut(world) else {
+                    return;
+                };
+                let ctx = SchemaFieldContext {
+                    types: &types,
+                    source,
+                    type_path: &type_path,
+                    names: &names,
+                    registry: &registry,
+                    server: server.as_ref(),
+                    editor_font: &editor_font,
+                    icon_font: &icon_font,
+                };
+                spawn_schema_fields(&mut commands, card.body, &ctx, &schema, &value, "", 0);
+                state.apply(world);
+            });
+        }
+    }
 
     spawn_save_action(world, card.section, source, dirty);
 }
