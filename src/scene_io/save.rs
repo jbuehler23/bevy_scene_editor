@@ -4,13 +4,9 @@ use std::path::{Path, PathBuf};
 use bevy::asset::{ReflectAsset, ReflectHandle, UntypedAssetId};
 use bevy::reflect::TypeRegistry;
 use bevy::{ecs::reflect::AppTypeRegistry, prelude::*, tasks::AsyncComputeTaskPool};
-use rfd::AsyncFileDialog;
 
 use super::load::SceneDialogTask;
-use super::{
-    SceneDirtyState, SceneFilePath, get_window_handle, should_skip_component,
-    structural_skip_type_ids,
-};
+use super::{SceneDirtyState, SceneFilePath, should_skip_component, structural_skip_type_ids};
 
 /// Write `contents` to `path` atomically: write to a temp file beside
 /// `path`, then rename over the target. `std::fs::write` truncates the
@@ -45,21 +41,12 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> 
 }
 
 fn spawn_save_dialog(world: &mut World) {
-    let raw_handle = get_window_handle(world);
-    let last_dir = world.resource::<SceneFilePath>().last_directory.clone();
-
-    let mut dialog = AsyncFileDialog::new()
-        .add_filter("BSN Scene", &["bsn"])
-        .set_file_name("scene.bsn");
-
-    if let Some(dir) = &last_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    if let Some(ref rh) = raw_handle {
-        // SAFETY: called on the main thread during an exclusive system
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog = crate::native_dialog::save_dialog(
+        world,
+        crate::native_dialog::DialogPurpose::Scene,
+        "scene.bsn",
+    )
+    .add_filter("BSN Scene", &["bsn"]);
 
     let task = AsyncComputeTaskPool::get().spawn(async move { dialog.save_file().await });
     world.insert_resource(SceneDialogTask::Save(task));

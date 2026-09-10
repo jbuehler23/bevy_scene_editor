@@ -44,7 +44,23 @@ fn forget_prefab_cache_bump(world: &mut World, before: Option<u64>) {
 
 #[derive(Resource)]
 pub(super) enum SceneDialogTask {
+    Open(Task<Option<FileHandle>>),
     Save(Task<Option<FileHandle>>),
+}
+
+/// Open the scene file picker behind File > Open. No-op while another
+/// scene dialog is already up.
+pub fn spawn_open_dialog(world: &mut World) {
+    if world.contains_resource::<SceneDialogTask>() {
+        return;
+    }
+    let dialog =
+        crate::native_dialog::file_dialog(world, crate::native_dialog::DialogPurpose::Scene)
+            .set_title("Open scene")
+            .add_filter("Jackdaw scene", &["bsn", "jsn"]);
+    let task =
+        bevy::tasks::AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
+    world.insert_resource(SceneDialogTask::Open(task));
 }
 
 /// Whether a load put its document in the world. Every refusal is fail-soft:
@@ -857,6 +873,21 @@ pub(super) fn poll_scene_dialog(world: &mut World) {
     };
 
     match &mut task {
+        SceneDialogTask::Open(t) => {
+            let Some(result) = future::block_on(future::poll_once(t)) else {
+                world.insert_resource(task); // Not ready, put it back
+                return;
+            };
+            if let Some(file) = result {
+                let path = file.path().to_path_buf();
+                crate::native_dialog::remember_pick(
+                    world,
+                    crate::native_dialog::DialogPurpose::Scene,
+                    &path,
+                );
+                crate::migrate_dialog::request_open_with_conversion(world, &path);
+            }
+        }
         SceneDialogTask::Save(t) => {
             let Some(result) = future::block_on(future::poll_once(t)) else {
                 world.insert_resource(task); // Not ready, put it back
@@ -888,6 +919,11 @@ pub(super) fn poll_scene_dialog(world: &mut World) {
                 // scene to a new name, so a rename cannot take part of it.
                 crate::scene_io::retarget_active_scene(world, &path.to_string_lossy());
                 world.resource_mut::<SceneFilePath>().last_directory = last_dir;
+                crate::native_dialog::remember_pick(
+                    world,
+                    crate::native_dialog::DialogPurpose::Scene,
+                    &path,
+                );
 
                 match save_scene_inner(world) {
                     Ok(()) => {}

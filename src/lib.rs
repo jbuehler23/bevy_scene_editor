@@ -89,6 +89,7 @@ pub mod modal_inputs;
 pub mod modal_transform;
 pub mod model_thumbnail;
 pub mod modifier_ops;
+pub mod native_dialog;
 pub mod new_project;
 pub mod numeric_transform;
 pub mod operator_tooltip;
@@ -466,6 +467,7 @@ impl Plugin for EditorCorePlugin {
             remote::debug::RemoteDebugPlugin,
             camera_settings::plugin,
         ))
+        .add_plugins(native_dialog::NativeDialogPlugin)
         .add_plugins(definition_assets::plugin)
         .add_plugins(model_thumbnail::plugin)
         .add_plugins(boot_ops::plugin)
