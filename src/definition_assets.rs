@@ -198,16 +198,15 @@ pub fn definition_file_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{}.bsn", sanitize_definition_name(name)))
 }
 
-/// The name a file gives the definition it holds: its stem, without a
-/// trailing `.<kind>` segment from the suffixes files used to carry.
-pub fn definition_name_of(path: &Path, kind: &str) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default();
-    stem.strip_suffix(&format!(".{kind}"))
-        .unwrap_or(stem)
-        .to_string()
+/// The name a file gives the definition it holds: everything before the first
+/// dot of its file name, so `torch.item.bsn` holds `torch`.
+pub fn definition_name_of(path: &Path) -> String {
+    let file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .trim_start_matches('.');
+    file.split('.').next().unwrap_or(file).to_string()
 }
 
 /// The folder a new definition lands in: the one the browser is showing when
@@ -269,7 +268,7 @@ fn load_schema_definition(
     path: &Path,
     text: &str,
 ) -> Option<DefinitionValue> {
-    let name = definition_name_of(path, &definition.kind);
+    let name = definition_name_of(path);
     let ast = match jackdaw_bsn::parse_bsn_text(text) {
         Ok(ast) => ast,
         Err(err) => {
@@ -321,22 +320,42 @@ fn empty_patch(type_path: &str) -> BsnStructData {
     }
 }
 
-/// Write one definition to the file it was opened from or created in. An
-/// identical rewrite is skipped so the asset watcher does not reload behind an
-/// unchanged save.
+/// The name the root of an existing file carries, so a save writes the file
+/// back under the name it already spells.
+fn root_name_of(text: &str) -> Option<String> {
+    let ast = jackdaw_bsn::parse_bsn_text(text).ok()?;
+    ast.roots.iter().find_map(|&root| {
+        ast.get_patches(root)?
+            .0
+            .iter()
+            .find_map(|&patch| match ast.get_patch(patch) {
+                Some(BsnPatch::Name(name)) => Some(name.clone()),
+                _ => None,
+            })
+    })
+}
+
+/// Write one definition to the file it was opened from or created in, under
+/// the root name that file already carries. An identical rewrite is skipped so
+/// the asset watcher does not reload behind an unchanged save.
 pub fn write_definition_file(
     world: &World,
     name: &str,
     value: &DefinitionValue,
     path: &Path,
 ) -> std::io::Result<PathBuf> {
-    let text = definition_text(world, name, value).unwrap_or_default();
+    let existing = std::fs::read_to_string(path).ok();
+    let name = existing
+        .as_deref()
+        .and_then(root_name_of)
+        .unwrap_or_else(|| name.to_string());
+    let text = definition_text(world, &name, value).unwrap_or_default();
     if text.trim().is_empty() {
         return Err(std::io::Error::other(format!(
             "nothing to write for '{name}'"
         )));
     }
-    if std::fs::read_to_string(path).is_ok_and(|existing| existing == text) {
+    if existing.is_some_and(|existing| existing == text) {
         return Ok(path.to_path_buf());
     }
     if let Some(parent) = path.parent() {
@@ -480,7 +499,7 @@ fn scan_definition_files(
         let Some(definition) = kinds.by_type_path(&type_path).filter(|kind| kind.scanned()) else {
             continue;
         };
-        let name = definition_name_of(&path, &definition.kind);
+        let name = definition_name_of(&path);
         if found
             .iter()
             .any(|(kind, known, _)| kind == &definition.kind && known == &name)
@@ -835,7 +854,7 @@ fn write_schema_field(
             };
             if crate::schema_values::default_field_json(&schema, &field_name).as_ref() == Some(new)
             {
-                crate::schema_values::set_authored(&mut data, &field_name, None);
+                crate::schema_values::set_authored(&mut data, &schema, &field_name, None);
                 continue;
             }
             let Some(value) =
@@ -843,7 +862,7 @@ fn write_schema_field(
             else {
                 return false;
             };
-            crate::schema_values::set_authored(&mut data, &field_name, Some(value));
+            crate::schema_values::set_authored(&mut data, &schema, &field_name, Some(value));
         }
         true
     });
@@ -1124,7 +1143,7 @@ pub fn open_definition_file(world: &mut World, path: &Path) -> bool {
     let Some(definition) = kind_of_file(world, path) else {
         return false;
     };
-    let name = definition_name_of(path, &definition.kind);
+    let name = definition_name_of(path);
 
     let known = world
         .resource::<DefinitionRegistry>()
@@ -1223,7 +1242,7 @@ fn save_definition_at(world: &mut World, path: &Path) -> Option<String> {
         warn!("asset.save: {} is not an asset file", path.display());
         return None;
     };
-    let name = definition_name_of(path, &definition.kind);
+    let name = definition_name_of(path);
     let Some(value) = world
         .resource::<DefinitionRegistry>()
         .get(&definition.kind, &name)
@@ -1549,12 +1568,10 @@ fn create_definition(
         warn!("asset.new: {kind} definitions are created by whoever loads them");
         return None;
     }
-    let (dir, named_by_path) = match dir {
+    let (dir, file) = match dir {
         Some(file) if names_a_file(file) => (
             file.parent().unwrap_or(file).to_path_buf(),
-            file.file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(str::to_owned),
+            Some(file.to_path_buf()),
         ),
         Some(dir) => (dir.to_path_buf(), None),
         None => {
@@ -1565,10 +1582,15 @@ fn create_definition(
             (dir, None)
         }
     };
-    let name = match name.map(str::to_owned).or(named_by_path) {
+    let asked_for = name.map(sanitize_definition_name);
+    let named_by_path = file.as_deref().map(definition_name_of);
+    let name = match named_by_path.or_else(|| asked_for.clone()) {
         Some(name) => sanitize_definition_name(&name),
         None => next_free_name(world, kind, &dir),
     };
+    if asked_for.is_some_and(|asked| asked != name) {
+        warn!("asset.new: the file asked for names this {kind} '{name}'");
+    }
     if world
         .resource::<DefinitionRegistry>()
         .get(kind, &name)
@@ -1577,7 +1599,7 @@ fn create_definition(
         warn!("asset.new: a {kind} named '{name}' already exists");
         return None;
     }
-    let path = definition_file_path(&dir, &name);
+    let path = file.unwrap_or_else(|| definition_file_path(&dir, &name));
     if path.exists() {
         warn!("asset.new: {} is already there", path.display());
         return None;
@@ -1695,7 +1717,7 @@ fn delete_definition(world: &mut World, path: &Path) {
         );
         return;
     }
-    let name = definition_name_of(path, &definition.kind);
+    let name = definition_name_of(path);
     match std::fs::remove_file(path) {
         Ok(()) => info!("Removed {}", path.display()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -1887,6 +1909,40 @@ mod tests {
             .get(&handle.typed::<ItemDef>())
             .expect("the definition is in its store")
             .clone()
+    }
+
+    #[test]
+    fn a_file_names_its_definition_by_the_stem_before_its_first_dot() {
+        for (file, expected) in [
+            ("torch.item.bsn", "torch"),
+            ("torch.bsn", "torch"),
+            ("torch", "torch"),
+            (".torch.item.bsn", "torch"),
+        ] {
+            assert_eq!(
+                definition_name_of(Path::new(file)),
+                expected,
+                "{file} names a definition"
+            );
+        }
+    }
+
+    #[test]
+    fn the_root_name_a_file_spells_is_read_back_however_it_is_written() {
+        assert_eq!(
+            root_name_of("#torch\njackdaw::Item {\n}\n").as_deref(),
+            Some("torch")
+        );
+        assert_eq!(
+            root_name_of("#\"torch.item\"\njackdaw::Item {\n}\n").as_deref(),
+            Some("torch.item"),
+            "a quoted name is the name, without its quotes"
+        );
+        assert_eq!(
+            root_name_of("jackdaw::Item {\n}\n"),
+            None,
+            "a root that names nothing leaves the name to the caller"
+        );
     }
 
     #[test]

@@ -192,14 +192,50 @@ fn authored<'a>(data: &'a BsnStructData, name: &str) -> Option<&'a BsnValue> {
 
 /// Write one field into a patch, or drop it when it holds what the type
 /// defaults to.
-pub fn set_authored(data: &mut BsnStructData, name: &str, value: Option<BsnValue>) {
-    data.fields.0.retain(|field| field.name != name);
-    if let Some(value) = value {
-        data.fields.0.push(BsnField {
+///
+/// A field already spelled keeps its place and a new one takes the place the
+/// type declares it in, so one edit rewrites one line.
+pub fn set_authored(
+    data: &mut BsnStructData,
+    schema: &TypeSchema,
+    name: &str,
+    value: Option<BsnValue>,
+) {
+    let Some(value) = value else {
+        data.fields.0.retain(|field| field.name != name);
+        return;
+    };
+    if let Some(field) = data.fields.0.iter_mut().find(|field| field.name == name) {
+        field.value = value;
+        return;
+    }
+    let at = declared_position(data, schema, name);
+    data.fields.0.insert(
+        at,
+        BsnField {
             name: name.to_string(),
             value,
-        });
-    }
+        },
+    );
+}
+
+/// Where a field the patch does not spell yet belongs: before the first field
+/// the type declares after it, and at the end when the type declares neither.
+fn declared_position(data: &BsnStructData, schema: &TypeSchema, name: &str) -> usize {
+    let Some(declared) = schema.fields.iter().position(|field| field.name == name) else {
+        return data.fields.0.len();
+    };
+    data.fields
+        .0
+        .iter()
+        .position(|field| {
+            schema
+                .fields
+                .iter()
+                .position(|known| known.name == field.name)
+                .is_some_and(|known| known > declared)
+        })
+        .unwrap_or(data.fields.0.len())
 }
 
 /// The JSON a BSN value stands for in a field of `type_path`.
@@ -563,6 +599,86 @@ mod tests {
             &parse_path("loot[2].item"),
             Value::String("gem".into())
         ));
+    }
+
+    fn item_schema() -> TypeSchema {
+        serde_json::from_value(serde_json::json!({
+            "type_path": "my_game::content::ItemDef",
+            "short_name": "ItemDef",
+            "module_path": "my_game::content",
+            "category": "",
+            "description": "",
+            "hidden": false,
+            "default_constructible": true,
+            "kind": "Struct",
+            "default": null,
+            "fields": [
+                { "name": "stack_size", "type_path": "u32" },
+                { "name": "rarity", "type_path": "my_game::content::Rarity" },
+                { "name": "weight", "type_path": "f32" }
+            ]
+        }))
+        .expect("the schema reads")
+    }
+
+    fn patch_of(names: &[&str]) -> BsnStructData {
+        BsnStructData {
+            type_path: "my_game::content::ItemDef".to_string(),
+            fields: BsnStructFields(
+                names
+                    .iter()
+                    .map(|name| BsnField {
+                        name: (*name).to_string(),
+                        value: BsnValue::Int(1),
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    fn field_names(data: &BsnStructData) -> Vec<&str> {
+        data.fields
+            .0
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_field_the_patch_already_spells_keeps_the_place_it_has() {
+        let mut data = patch_of(&["weight", "stack_size"]);
+        set_authored(&mut data, &item_schema(), "weight", Some(BsnValue::Int(4)));
+
+        assert_eq!(field_names(&data), ["weight", "stack_size"]);
+        assert_eq!(
+            data.fields.0[0].value,
+            BsnValue::Int(4),
+            "and holds what was written to it"
+        );
+    }
+
+    #[test]
+    fn a_field_arriving_takes_the_place_its_type_declares_it_in() {
+        let mut data = patch_of(&["stack_size", "weight"]);
+        set_authored(&mut data, &item_schema(), "rarity", Some(BsnValue::Int(1)));
+
+        assert_eq!(field_names(&data), ["stack_size", "rarity", "weight"]);
+    }
+
+    #[test]
+    fn a_field_the_type_does_not_declare_arrives_at_the_end() {
+        let mut data = patch_of(&["stack_size"]);
+        set_authored(&mut data, &item_schema(), "charges", Some(BsnValue::Int(1)));
+
+        assert_eq!(field_names(&data), ["stack_size", "charges"]);
+    }
+
+    #[test]
+    fn a_field_holding_what_its_type_defaults_to_stops_being_authored() {
+        let mut data = patch_of(&["stack_size", "weight"]);
+        set_authored(&mut data, &item_schema(), "stack_size", None);
+
+        assert_eq!(field_names(&data), ["weight"]);
     }
 
     #[test]

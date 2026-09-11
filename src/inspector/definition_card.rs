@@ -3,7 +3,8 @@
 //! The card is the generic component card with the definition's reflected
 //! fields in its body, so scalars, enum menus and list rows behave exactly as
 //! they do on a component. Its header carries the Save action and says when
-//! the definition has unsaved edits.
+//! the definition has unsaved edits, and the card opens expanded, since it is
+//! all the panel has to show.
 
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
@@ -29,8 +30,31 @@ enum CardBody {
     Schema(Box<jackdaw_schema::TypeSchema>, serde_json::Value),
 }
 
+/// Marks the card a definition puts up: it stands for a whole file, so no
+/// category tab files it or hides it.
+#[derive(Component)]
+pub(crate) struct DefinitionCard;
+
+/// Drop the card the inspector already holds for a definition, so filling it
+/// twice in a frame leaves one card rather than two.
+fn despawn_existing_card(world: &mut World, inspector: Entity) {
+    let Some(children) = world.get::<Children>(inspector) else {
+        return;
+    };
+    let cards: Vec<Entity> = children
+        .iter()
+        .filter(|&child| world.get::<DefinitionCard>(child).is_some())
+        .collect();
+    for card in cards {
+        if let Ok(entity) = world.get_entity_mut(card) {
+            entity.despawn();
+        }
+    }
+}
+
 /// Build the card for the definition `source` is editing under `inspector`.
 pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source: Entity) {
+    despawn_existing_card(world, inspector);
     let Some((kind, name, type_path, dirty)) =
         world.get::<DefinitionAssetEdit>(source).map(|edit| {
             (
@@ -52,17 +76,29 @@ pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source:
         .map_or_else(|| kind.clone(), |definition| definition.label.clone());
     let schema_backed = registered.is_some_and(|definition| definition.schema_backed());
     let body = if schema_backed {
-        let (Some(schema), Some(value)) = (
-            crate::definition_assets::definition_schema(world, &kind),
-            crate::definition_assets::schema_definition_json(world, &kind, &name),
-        ) else {
+        let Some(schema) = crate::definition_assets::definition_schema(world, &kind) else {
+            bevy::log::warn_once!(
+                "this project reports no shape for {type_path}, which its {kind} files hold"
+            );
+            return;
+        };
+        let Some(value) = crate::definition_assets::schema_definition_json(world, &kind, &name)
+        else {
+            bevy::log::warn_once!(
+                "no {kind} named '{name}' is loaded, so its {type_path} card is empty"
+            );
             return;
         };
         CardBody::Schema(Box::new(schema), value)
     } else {
         match definition_snapshot(world, source, &type_path) {
             Some(value) => CardBody::Reflected(value),
-            None => return,
+            None => {
+                bevy::log::warn_once!(
+                    "the editor has no registration for {type_path}, which {kind} files hold"
+                );
+                return;
+            }
         }
     };
 
@@ -70,10 +106,11 @@ pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source:
     let server = world.get_resource::<AssetServer>().cloned();
     let icon_font = world.resource::<IconFont>().0.clone();
     let editor_font = world.resource::<EditorFont>().0.clone();
-    let collapse_state =
+    let mut collapse_state =
         super::InspectorCollapseState(world.resource::<super::InspectorCollapseState>().0.clone());
 
     let card_name = format!("{name} ({label})");
+    collapse_state.0.entry(card_name.clone()).or_insert(false);
     let card = {
         let mut state: SystemState<Commands> = SystemState::new(world);
         let Ok(mut commands) = state.get_mut(world) else {
@@ -95,6 +132,7 @@ pub(crate) fn fill_definition_card(world: &mut World, inspector: Entity, source:
                 collapse_state: &collapse_state,
             },
         );
+        commands.entity(card.section).insert(DefinitionCard);
         jackdaw_feathers::utils::attach_or_despawn(&mut commands, inspector, card.section);
         state.apply(world);
         card
