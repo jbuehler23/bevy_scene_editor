@@ -194,7 +194,8 @@ pub fn scene_open(In(params): In<OperatorParameters>, mut commands: Commands) ->
             }
             None => None,
         };
-        let Some(path) = path.or_else(pick_scene_file) else {
+        let Some(path) = path else {
+            crate::scene_io::spawn_open_dialog(world);
             return;
         };
         // Legacy .jsn picks confirm conversion before opening.
@@ -387,12 +388,6 @@ pub fn scene_open_system(world: &mut World, path: &std::path::Path) {
 
     let target = world.resource_mut::<Scenes>().push_tab(tab);
     activate_pushed_tab(world, target);
-}
-
-fn pick_scene_file() -> Option<std::path::PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("Jackdaw scene", &["bsn", "jsn"])
-        .pick_file()
 }
 
 #[operator(id = "scene.close", label = "Close Tab", allows_undo = false)]

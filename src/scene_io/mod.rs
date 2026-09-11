@@ -5,10 +5,7 @@ use std::any::TypeId;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use bevy::{
-    prelude::*,
-    window::{PrimaryWindow, RawHandleWrapper},
-};
+use bevy::prelude::*;
 
 mod legacy;
 mod load;
@@ -20,7 +17,7 @@ pub use legacy::{load_inline_assets, load_scene_from_jsn};
 pub use load::{
     LoadOutcome, LoadRefusal, RefusalCategory, declared_scene_kind, declares_ui_scene_root,
     is_ui_scene_root_type_path, load_scene_from_file, load_scene_from_file_with_outcome,
-    spawn_default_lighting,
+    spawn_default_lighting, spawn_open_dialog,
 };
 pub(crate) use load::{
     SidecarImport, clear_scene_entities, despawn_scene_entities, import_terrain_sidecars,
@@ -294,14 +291,6 @@ impl From<jackdaw_jsn::format::JsnMetadata> for SceneMetadata {
             modified: metadata.modified,
         }
     }
-}
-
-fn get_window_handle(world: &mut World) -> Option<RawHandleWrapper> {
-    world
-        .query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>()
-        .single(world)
-        .ok()
-        .cloned()
 }
 
 #[cfg(test)]

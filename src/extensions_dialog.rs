@@ -24,7 +24,7 @@ use jackdaw_feathers::{
     dialog::{CloseDialogEvent, DialogChildrenSlot, OpenDialogEvent},
     tooltip::Tooltip,
 };
-use rfd::{AsyncFileDialog, FileHandle};
+use rfd::FileHandle;
 #[cfg(feature = "dylib")]
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 
@@ -371,8 +371,12 @@ fn install_button() -> impl Scene {
                 if world.resource::<InstallStatus>().task.is_some() {
                     return;
                 }
-                let dialog =
-                    AsyncFileDialog::new().add_filter("Jackdaw extension bundle", &["jdext"]);
+                let dialog = crate::native_dialog::file_dialog(
+                    world,
+                    crate::native_dialog::DialogPurpose::Bundle,
+                )
+                .set_title("Select extension bundle")
+                .add_filter("Jackdaw extension bundle", &["jdext"]);
                 let task =
                     AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
                 world.resource_mut::<InstallStatus>().task = Some(task);
@@ -408,6 +412,11 @@ fn poll_install_task(
         Some(picked) => {
             let src = picked.path().to_path_buf();
             commands.queue(move |world: &mut World| {
+                crate::native_dialog::remember_pick(
+                    world,
+                    crate::native_dialog::DialogPurpose::Bundle,
+                    &src,
+                );
                 if let Err(err) = world.run_system_cached_with(handle_install, src) {
                     error!("Failed to install extension: {err}");
                 }

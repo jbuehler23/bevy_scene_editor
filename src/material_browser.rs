@@ -5,7 +5,6 @@ use bevy::{
     image::ImageLoaderSettings,
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
-    window::{PrimaryWindow, RawHandleWrapper},
 };
 use jackdaw_feathers::{
     button::{ButtonOperatorCall, ButtonVariant, IconButtonProps, icon_button},
@@ -15,7 +14,6 @@ use jackdaw_feathers::{
     tokens,
 };
 use path_slash::PathExt as _;
-use rfd::AsyncFileDialog;
 
 use crate::brush::LastUsedMaterial;
 use crate::material_ui::{
@@ -713,29 +711,54 @@ fn handle_browse_texture_slot(
     event: On<BrowseTextureSlot>,
     mut commands: Commands,
     existing_task: Option<Res<TextureSlotPickTask>>,
-    raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
 ) {
     if existing_task.is_some() {
         return;
     }
     let slot = event.slot;
     let material_handle = event.material_handle.clone();
-    let mut dialog = AsyncFileDialog::new()
+    commands.queue(move |world: &mut World| {
+        if world.contains_resource::<TextureSlotPickTask>() {
+            return;
+        }
+        let directory = material_file_directory(world, &material_handle);
+        let dialog = match directory {
+            Some(directory) => crate::native_dialog::dialog_starting_at(world, Some(directory)),
+            None => crate::native_dialog::file_dialog(
+                world,
+                crate::native_dialog::DialogPurpose::Texture,
+            ),
+        }
         .set_title(format!("Select image for {}", slot.field()))
         .add_filter(
             "Images",
             &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
         );
-    if let Ok(rh) = raw_handle.single() {
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
-    let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
-    commands.insert_resource(TextureSlotPickTask {
-        task,
-        slot,
-        material_handle,
+        let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
+        world.insert_resource(TextureSlotPickTask {
+            task,
+            slot,
+            material_handle,
+        });
     });
+}
+
+/// The folder holding the material's own asset file, when it came from one.
+fn material_file_directory(
+    world: &World,
+    material_handle: &Handle<StandardMaterial>,
+) -> Option<PathBuf> {
+    let asset_server = world.get_resource::<AssetServer>()?;
+    let asset_path = asset_server.get_path(material_handle.id())?;
+    let assets_root = crate::project::open_project_assets_dir()?;
+    texture_browse_directory(&assets_root, asset_path.path())
+}
+
+/// The folder a texture browse starts in for a material stored at
+/// `material_path`, relative to `assets_root`.
+fn texture_browse_directory(assets_root: &Path, material_path: &Path) -> Option<PathBuf> {
+    let directory = assets_root.join(material_path.parent()?);
+    directory.is_dir().then_some(directory)
 }
 
 fn poll_texture_slot_pick(world: &mut World) {
@@ -753,6 +776,7 @@ fn poll_texture_slot_pick(world: &mut World) {
         return;
     };
     let path = file_handle.path().to_path_buf();
+    crate::native_dialog::remember_pick(world, crate::native_dialog::DialogPurpose::Texture, &path);
     let fs_path = path.to_slash_lossy();
     let asset_path = crate::entity_ops::to_asset_path(&fs_path);
     let asset_server = world.resource::<AssetServer>().clone();
@@ -1157,22 +1181,19 @@ pub(crate) fn material_rescan(
     label = "Select Materials Folder",
     description = "Choose a different folder as the materials directory."
 )]
-pub fn material_select_folder(
-    _: In<OperatorParameters>,
-    mut commands: Commands,
-    raw_handle: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
-) -> OperatorResult {
-    let mut dialog = AsyncFileDialog::new().set_title("Select materials directory");
-    if let Ok(rh) = raw_handle.single() {
-        // SAFETY: the primary window is open, so its `RawHandleWrapper`
-        // points to a live OS handle. We use the returned wrapper only
-        // to parent the modal dialog within this scope.
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
-    let task =
-        bevy::tasks::AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
-    commands.insert_resource(MaterialBrowserFolderTask(task));
+pub fn material_select_folder(_: In<OperatorParameters>, mut commands: Commands) -> OperatorResult {
+    commands.queue(|world: &mut World| {
+        if world.contains_resource::<MaterialBrowserFolderTask>() {
+            return;
+        }
+        let current = world
+            .get_resource::<MaterialBrowserState>()
+            .map(|state| state.scan_directory.clone());
+        let dialog = crate::native_dialog::dialog_starting_at(world, current)
+            .set_title("Select materials directory");
+        let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_folder().await });
+        world.insert_resource(MaterialBrowserFolderTask(task));
+    });
     OperatorResult::Finished
 }
 
@@ -1237,6 +1258,27 @@ mod tests {
         app.init_asset::<Image>();
         app.init_asset::<StandardMaterial>();
         app
+    }
+
+    #[test]
+    fn a_texture_browse_starts_in_the_folder_holding_the_material() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let assets = dir.path();
+        std::fs::create_dir_all(assets.join("materials/stone")).expect("the material folder");
+
+        let start = texture_browse_directory(assets, Path::new("materials/stone/granite.bsn"))
+            .expect("a start directory");
+        assert_eq!(start, assets.join("materials/stone"));
+    }
+
+    #[test]
+    fn a_texture_browse_ignores_a_material_folder_that_is_not_there() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+
+        assert_eq!(
+            texture_browse_directory(dir.path(), Path::new("materials/gone/granite.bsn")),
+            None
+        );
     }
 
     fn detected(paths: &[&str]) -> jackdaw_material::MaterialSet {

@@ -1132,31 +1132,13 @@ pub struct PrefabPickTask(bevy::tasks::Task<Option<rfd::FileHandle>>);
 /// Open the prefab file picker backing `entity.add.prefab`. No-op while a
 /// pick is already pending.
 pub fn open_prefab_picker(world: &mut World) {
-    use bevy::window::{PrimaryWindow, RawHandleWrapper};
-
     if world.contains_resource::<PrefabPickTask>() {
         return;
     }
-    let raw_handle = world
-        .query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>()
-        .single(world)
-        .ok()
-        .cloned();
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title("Select prefab")
-        .add_filter("Prefab", &["bsn"]);
-    // Where `Save As Prefab` writes them, when a project is open.
-    if let Some(root) = world.get_resource::<crate::project::ProjectRoot>() {
-        let prefabs = root.root.join("assets/prefabs");
-        if prefabs.is_dir() {
-            dialog = dialog.set_directory(prefabs);
-        }
-    }
-    if let Some(ref handle) = raw_handle {
-        // SAFETY: called on the main thread from an exclusive context
-        let handle = unsafe { handle.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
+    let dialog =
+        crate::native_dialog::file_dialog(world, crate::native_dialog::DialogPurpose::Prefab)
+            .set_title("Select prefab")
+            .add_filter("Prefab", &["bsn"]);
     let task =
         bevy::tasks::AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
     world.insert_resource(PrefabPickTask(task));
@@ -1176,7 +1158,9 @@ pub fn poll_prefab_pick(world: &mut World) {
     let Some(file_handle) = result else {
         return;
     };
-    spawn_instance(world, file_handle.path(), Vec3::ZERO);
+    let path = file_handle.path().to_path_buf();
+    crate::native_dialog::remember_pick(world, crate::native_dialog::DialogPurpose::Prefab, &path);
+    spawn_instance(world, &path, Vec3::ZERO);
 }
 
 /// Add a new prefab instance to the live scene at `world_pos`. Caches the
