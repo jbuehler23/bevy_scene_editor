@@ -13,5 +13,6 @@ mod definition_card;
 mod inspector_panel_width;
 mod inspector_preview_guard;
 mod inspector_val;
+mod opened_definition_card;
 mod schema_definition_card;
 mod widget_cards;

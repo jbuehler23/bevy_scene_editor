@@ -755,3 +755,198 @@ fn a_colour_field_on_a_project_component_takes_channels() {
         "the colour is authored as a colour, not as the text it was typed as: {spelled}"
     );
 }
+
+/// A hand-authored item file, spelled the way the emitter writes one so a save
+/// that changes nothing changes no line.
+const AUTHORED_TORCH: &str = "\
+#torch
+definition_project::content::ItemDef {
+    stack_size: 12,
+    rarity: definition_project::content::Rarity::Rare,
+    loot: [
+        definition_project::content::LootRoll {
+            item: \"coin\",
+            weight: 3,
+        },
+        definition_project::content::LootRoll {
+            item: \"gem\",
+            weight: 7,
+        },
+    ],
+}
+";
+
+fn authored_torch() -> String {
+    jackdaw::asset_files::asset_file_text(ITEM_TYPE, AUTHORED_TORCH)
+}
+
+/// A project holding that file under a name carrying a kind segment.
+fn editor_on_an_authored_torch() -> (App, tempfile::TempDir, PathBuf) {
+    let tmp = project_copy();
+    let path = tmp.path().join("assets/content/torch.item.bsn");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("the directory is made");
+    std::fs::write(&path, authored_torch()).expect("the file is written");
+    let app = editor_on(tmp.path());
+    (app, tmp, path)
+}
+
+#[test]
+fn a_re_saved_definition_keeps_the_root_name_its_file_carries() {
+    let (mut app, _tmp, path) = editor_on_an_authored_torch();
+    call(
+        &mut app,
+        "asset.open",
+        &[("path", path.to_string_lossy().into_owned().into())],
+    );
+
+    call(
+        &mut app,
+        "asset.set",
+        &[("field", "stack_size".into()), ("value", "20".into())],
+    );
+    call(&mut app, "asset.save", &[]);
+
+    let written = std::fs::read_to_string(&path).expect("the file reads");
+    assert!(
+        written.contains("#torch\n"),
+        "the root is still the one the file named, got:\n{written}"
+    );
+}
+
+#[test]
+fn a_new_definition_goes_by_the_file_it_was_asked_for_rather_than_the_name() {
+    let (mut app, tmp) = editor_with_items();
+
+    call(
+        &mut app,
+        "asset.new",
+        &[
+            ("type", "item".into()),
+            ("name", "torch".into()),
+            ("path", "content/lantern.item.bsn".into()),
+        ],
+    );
+
+    assert!(
+        tmp.path().join("assets/content/lantern.item.bsn").is_file(),
+        "the file the caller named is the file that is written"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<DefinitionRegistry>()
+            .names_of("item"),
+        vec!["lantern".to_string()],
+        "and the name is the one a scan would read back from it"
+    );
+}
+
+#[test]
+fn a_re_saved_definition_keeps_a_quoted_root_name_quoted() {
+    let tmp = project_copy();
+    let path = tmp.path().join("assets/content/torch.item.bsn");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("the directory is made");
+    let quoted = AUTHORED_TORCH.replace("#torch", "#\"torch.item\"");
+    std::fs::write(
+        &path,
+        jackdaw::asset_files::asset_file_text(ITEM_TYPE, &quoted),
+    )
+    .expect("the file is written");
+    let mut app = editor_on(tmp.path());
+    call(
+        &mut app,
+        "asset.open",
+        &[("path", path.to_string_lossy().into_owned().into())],
+    );
+
+    call(
+        &mut app,
+        "asset.set",
+        &[("field", "stack_size".into()), ("value", "20".into())],
+    );
+    call(&mut app, "asset.save", &[]);
+
+    let written = std::fs::read_to_string(&path).expect("the file reads");
+    assert!(
+        written.contains("#\"torch.item\"\n"),
+        "the name the file spells survives the save, got:\n{written}"
+    );
+}
+
+#[test]
+fn a_definition_is_named_by_the_stem_before_the_first_dot_of_its_file() {
+    let (app, _tmp, _path) = editor_on_an_authored_torch();
+
+    assert_eq!(
+        app.world()
+            .resource::<DefinitionRegistry>()
+            .names_of("item"),
+        vec!["torch".to_string()],
+        "the kind segment the file carries is no part of the name"
+    );
+}
+
+#[test]
+fn a_new_definition_asked_for_by_a_file_path_drops_its_kind_segment() {
+    let (mut app, tmp) = editor_with_items();
+
+    call(
+        &mut app,
+        "asset.new",
+        &[
+            ("type", "item".into()),
+            ("path", "content/lantern.item.bsn".into()),
+        ],
+    );
+
+    let path = tmp.path().join("assets/content/lantern.item.bsn");
+    assert!(path.is_file(), "asset.new writes the file at {path:?}");
+    assert_eq!(
+        app.world()
+            .resource::<DefinitionRegistry>()
+            .names_of("item"),
+        vec!["lantern".to_string()],
+    );
+    let written = std::fs::read_to_string(&path).expect("the file reads");
+    assert!(
+        written.contains("#lantern\n"),
+        "and its root is that name, got:\n{written}"
+    );
+}
+
+#[test]
+fn editing_one_field_of_a_loaded_file_rewrites_one_line() {
+    let (mut app, _tmp, path) = editor_on_an_authored_torch();
+    call(
+        &mut app,
+        "asset.open",
+        &[("path", path.to_string_lossy().into_owned().into())],
+    );
+    let before = authored_torch();
+
+    call(
+        &mut app,
+        "asset.set",
+        &[("field", "stack_size".into()), ("value", "20".into())],
+    );
+    call(&mut app, "asset.save", &[]);
+
+    let after = std::fs::read_to_string(&path).expect("the file reads");
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+    assert_eq!(
+        before_lines.len(),
+        after_lines.len(),
+        "the file keeps its shape, got:\n{after}"
+    );
+    let changed: Vec<(&str, &str)> = before_lines
+        .iter()
+        .zip(&after_lines)
+        .filter(|(before, after)| before != after)
+        .map(|(before, after)| (*before, *after))
+        .collect();
+    assert_eq!(
+        changed,
+        vec![("    stack_size: 12,", "    stack_size: 20,")],
+        "only the field that was edited moved, got:\n{after}"
+    );
+}

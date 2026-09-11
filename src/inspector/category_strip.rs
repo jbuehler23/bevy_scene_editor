@@ -167,7 +167,10 @@ pub(super) fn spawn_category_strip(
 pub(super) fn paint_category_tabs(
     registry: Res<InspectorRegistry>,
     active: Res<ActiveInspectorCategory>,
-    type_paths: Query<&super::ComponentDisplayTypePath>,
+    type_paths: Query<
+        &super::ComponentDisplayTypePath,
+        Without<super::definition_card::DefinitionCard>,
+    >,
     added_paths: Query<(), Added<super::ComponentDisplayTypePath>>,
     removed_paths: RemovedComponents<super::ComponentDisplayTypePath>,
     tabs: Query<(Entity, &InspectorCategoryTab, &Children)>,
@@ -237,7 +240,13 @@ pub(super) fn paint_category_tabs(
 /// cards by writing the resource unconditionally (marking it changed).
 pub(super) fn resolve_active_on_rebuild(
     registry: Res<InspectorRegistry>,
-    cards: Query<&super::ComponentDisplayTypePath, With<super::ComponentDisplay>>,
+    cards: Query<
+        &super::ComponentDisplayTypePath,
+        (
+            With<super::ComponentDisplay>,
+            Without<super::definition_card::DefinitionCard>,
+        ),
+    >,
     added: Query<(), Added<super::ComponentDisplay>>,
     mut removed: RemovedComponents<super::ComponentDisplay>,
     mut active: ResMut<ActiveInspectorCategory>,

@@ -1271,6 +1271,9 @@ pub(crate) fn spawn_component_display(
 /// category AND its short name passes the search text predicate (either the
 /// search field is empty or the name contains the filter string).
 ///
+/// A definition card is the panel's whole contents rather than one component of
+/// an entity, so no category hides it; the search still does.
+///
 /// The system re-runs whenever the search text changes OR the active category
 /// changes. Group-section visibility follows: a group hides when all of its
 /// cards are hidden.
@@ -1278,7 +1281,15 @@ pub(crate) fn filter_inspector_components(
     search_query: Query<&TextEditValue, With<InspectorSearch>>,
     active: Res<ActiveInspectorCategory>,
     registry: Res<jackdaw_api_internal::inspector::InspectorRegistry>,
-    components: Query<(Entity, &ComponentName, &ComponentDisplayTypePath), With<ComponentDisplay>>,
+    components: Query<
+        (
+            Entity,
+            &ComponentName,
+            &ComponentDisplayTypePath,
+            Has<super::definition_card::DefinitionCard>,
+        ),
+        With<ComponentDisplay>,
+    >,
     groups: Query<(Entity, &Children), With<InspectorGroupSection>>,
     mut node_query: Query<&mut Node>,
     changed_search: Query<(), (With<InspectorSearch>, Changed<TextEditValue>)>,
@@ -1299,8 +1310,8 @@ pub(crate) fn filter_inspector_components(
     // Track which component entities are visible.
     let mut visible_components: HashSet<Entity> = HashSet::new();
 
-    for (entity, comp_name, type_path) in &components {
-        let category_ok = registry.category_for(&type_path.0) == active_cat;
+    for (entity, comp_name, type_path, is_definition) in &components {
+        let category_ok = is_definition || registry.category_for(&type_path.0) == active_cat;
         let search_ok = filter.is_empty() || comp_name.0.to_lowercase().contains(&filter);
         let visible = category_ok && search_ok;
 
