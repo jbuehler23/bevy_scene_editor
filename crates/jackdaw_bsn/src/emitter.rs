@@ -309,14 +309,10 @@ fn emit_value_maybe_multiline(value: &BsnValue, indent: usize, out: &mut String)
         }
         BsnValue::List(items) if !items.is_empty() => {
             writeln!(out, "[").unwrap();
-            for (i, item) in items.iter().enumerate() {
+            for item in items {
                 write_indent(indent + 1, out);
                 emit_value_maybe_multiline(item, indent + 1, out);
-                if i + 1 < items.len() {
-                    writeln!(out, ",").unwrap();
-                } else {
-                    writeln!(out).unwrap();
-                }
+                writeln!(out, ",").unwrap();
             }
             write_indent(indent, out);
             write!(out, "]").unwrap();
@@ -451,6 +447,36 @@ mod tests {
 
         let text = emit_scene(&ast);
         assert!(text.contains("SceneRoot(\"models/FlightHelmet/FlightHelmet.gltf#Scene0\")"));
+    }
+
+    #[test]
+    fn every_row_of_a_list_ends_in_a_comma_so_adding_one_touches_one_line() {
+        let mut ast = SceneBsnAst::default();
+
+        let row = |item: &str| {
+            BsnValue::Struct(BsnStructData {
+                type_path: "test::LootRoll".into(),
+                fields: BsnStructFields(vec![BsnField {
+                    name: "item".into(),
+                    value: BsnValue::String(item.into()),
+                }]),
+            })
+        };
+        let patch = ast
+            .world
+            .spawn(BsnPatch::Struct(BsnStructData {
+                type_path: "test::ItemDef".into(),
+                fields: BsnStructFields(vec![BsnField {
+                    name: "loot".into(),
+                    value: BsnValue::List(vec![row("coin"), row("gem")]),
+                }]),
+            }))
+            .id();
+        let entity = ast.world.spawn(BsnPatches(vec![patch])).id();
+        ast.roots.push(entity);
+
+        let expected = "test::ItemDef {\n    loot: [\n        test::LootRoll {\n            item: \"coin\",\n        },\n        test::LootRoll {\n            item: \"gem\",\n        },\n    ],\n}\n";
+        assert_eq!(emit_scene(&ast), expected);
     }
 
     #[test]

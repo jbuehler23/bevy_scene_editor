@@ -1,0 +1,151 @@
+{
+  "components": [],
+  "resources": [],
+  "events": [],
+  "functions": [],
+  "assets": [
+    {
+      "type_path": "mob_project::content::MobArchetypeDef",
+      "short_name": "MobArchetypeDef",
+      "module_path": "mob_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [
+        {
+          "name": "archetype_id",
+          "type_path": "alloc::string::String",
+          "item_type_path": ""
+        },
+        {
+          "name": "name",
+          "type_path": "alloc::string::String",
+          "item_type_path": ""
+        },
+        {
+          "name": "max_health",
+          "type_path": "i32",
+          "item_type_path": ""
+        },
+        {
+          "name": "move_speed",
+          "type_path": "f32",
+          "item_type_path": ""
+        },
+        {
+          "name": "aggro_radius",
+          "type_path": "f32",
+          "item_type_path": ""
+        },
+        {
+          "name": "leash_radius",
+          "type_path": "f32",
+          "item_type_path": ""
+        },
+        {
+          "name": "passive",
+          "type_path": "bool",
+          "item_type_path": ""
+        },
+        {
+          "name": "temper",
+          "type_path": "mob_project::content::Temper",
+          "item_type_path": ""
+        },
+        {
+          "name": "drops",
+          "type_path": "alloc::vec::Vec<mob_project::content::LootDrop>",
+          "item_type_path": "mob_project::content::LootDrop"
+        }
+      ],
+      "kind": "Struct",
+      "default": {
+        "mob_project::content::MobArchetypeDef": {
+          "archetype_id": "",
+          "name": "",
+          "max_health": 0,
+          "move_speed": 0.0,
+          "aggro_radius": 0.0,
+          "leash_radius": 0.0,
+          "passive": false,
+          "temper": "Calm",
+          "drops": []
+        }
+      },
+      "variants": [],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": true
+    },
+    {
+      "type_path": "mob_project::content::LootDrop",
+      "short_name": "LootDrop",
+      "module_path": "mob_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [
+        {
+          "name": "family",
+          "type_path": "alloc::string::String",
+          "item_type_path": ""
+        },
+        {
+          "name": "weight",
+          "type_path": "u32",
+          "item_type_path": ""
+        }
+      ],
+      "kind": "Struct",
+      "default": {
+        "mob_project::content::LootDrop": {
+          "family": "",
+          "weight": 1
+        }
+      },
+      "variants": [],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": false
+    },
+    {
+      "type_path": "mob_project::content::Temper",
+      "short_name": "Temper",
+      "module_path": "mob_project::content",
+      "category": "",
+      "description": "",
+      "editor_description": "",
+      "hidden": false,
+      "preview": "",
+      "default_constructible": true,
+      "fields": [],
+      "kind": "Enum",
+      "default": {
+        "mob_project::content::Temper": "Calm"
+      },
+      "variants": [
+        {
+          "name": "Calm",
+          "fields": []
+        },
+        {
+          "name": "Skittish",
+          "fields": []
+        },
+        {
+          "name": "Fierce",
+          "fields": []
+        }
+      ],
+      "entity_fields": [],
+      "fills_gaps": true,
+      "asset": false
+    }
+  ]
+}
